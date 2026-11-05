@@ -1,0 +1,16 @@
+{
+  "name": "metro-simulator-spike",
+  "displayName": "Metro M0 Simulator (spike)",
+  "description": "Feasibility spike: real CircuitPython in WebAssembly with a simulated Metro M0 Express.",
+  "version": "0.0.1",
+  "publisher": "speakinginbits",
+  "private": true,
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.cjs",
+  "contributes": {
+    "commands": [
+      { "command": "metroSim.run", "title": "Metro Simulator: Run Current File" },
+      { "command": "metroSim.selfTest", "title": "Metro Simulator: Self Test" }
+    ]
+  }
+}

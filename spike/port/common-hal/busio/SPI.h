@@ -1,0 +1,15 @@
+#pragma once
+
+#include "common-hal/microcontroller/Pin.h"
+
+typedef struct {
+    mp_obj_base_t base;
+    const mcu_pin_obj_t *clock;
+    const mcu_pin_obj_t *mosi;
+    const mcu_pin_obj_t *miso;
+    bool has_lock;
+    uint32_t baudrate;
+    uint8_t polarity;
+    uint8_t phase;
+    uint8_t bits;
+} busio_spi_obj_t;

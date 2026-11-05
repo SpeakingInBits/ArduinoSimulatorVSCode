@@ -1,0 +1,5 @@
+.toolchain/
+circuitpython/
+tests/libs/
+example/lib/
+*.log
