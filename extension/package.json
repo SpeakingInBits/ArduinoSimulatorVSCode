@@ -13,14 +13,23 @@
   "main": "./extension.cjs",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "test:unit": "node --test test/circuit.test.js test/console.test.js test/layout3d.test.js",
+    "test:unit": "node --test test/circuit.test.js test/console.test.js test/layout3d.test.js test/diagram.test.js",
     "test:e2e": "node scripts/run-e2e.js",
     "assets": "node scripts/copy-assets.js"
   },
   "activationEvents": ["workspaceContains:**/circuit.json"],
   "contributes": {
+    "customEditors": [
+      {
+        "viewType": "metroSim.diagram",
+        "displayName": "Circuit Diagram",
+        "selector": [{ "filenamePattern": "circuit.json" }],
+        "priority": "default"
+      }
+    ],
     "commands": [
       { "command": "metroSim.open", "title": "Open Circuit Simulator", "category": "Metro Simulator" },
+      { "command": "metroSim.diagram", "title": "Show Circuit Diagram", "category": "Metro Simulator" },
       { "command": "metroSim.run", "title": "Run on Simulator", "category": "Metro Simulator", "icon": "$(play)" },
       { "command": "metroSim.stop", "title": "Stop Simulator", "category": "Metro Simulator", "icon": "$(debug-stop)" },
       { "command": "metroSim.newProject", "title": "New Project from Example", "category": "Metro Simulator" },

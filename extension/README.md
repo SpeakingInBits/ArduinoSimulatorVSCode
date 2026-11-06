@@ -12,6 +12,7 @@ Express, so your `code.py` can move to a real board unchanged.
    needs the Python extension.
 
 Each project is a folder holding `code.py`, your circuit in `circuit.json`, and a `lib` folder.
+Opening `circuit.json` shows its [circuit diagram](#circuit-diagram).
 
 ## Build a circuit
 
@@ -52,6 +53,22 @@ L293D, and batteries.
 - Memory limits are an estimate, so a program near the limit may behave differently.
 - Parts are simplified. Capacitors do nothing at DC, and the display contrast pin is ignored.
 - USB keyboard, mouse and MIDI output is accepted, but nothing shows it yet.
+
+## Circuit diagram
+
+Open `circuit.json`, or press **Diagram** in the builder, to see the circuit as a schematic. It shows
+how parts are joined rather than where they sit, so breadboards disappear and only the board pins in
+use are drawn. Power and ground are marked at each pin instead of being wired across the page.
+
+The diagram is drawn from the file and only shows it, so it updates as you build. Press **Edit
+circuit** to open the builder, or **Show JSON** to see the file as text. Hover over a wire to light
+up everything joined to it. Wires that cross without a dot are not connected.
+
+Parts need no diagram symbol: each one is drawn as a labelled block. To draw a part with its own
+symbol, add it to `SYMBOLS` in `webview/diagram-art.js`.
+
+To work on the diagram outside VS Code, serve the `extension` folder over HTTP and open
+`test/diagram-preview.html?example=dimmer`.
 
 ## 3D view
 

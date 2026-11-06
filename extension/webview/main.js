@@ -883,6 +883,7 @@ $('rotate').addEventListener('click', rotateSelection);
 $('delete').addEventListener('click', deleteSelection);
 $('fit').addEventListener('click', () => (state.scene3d ? state.scene3d.fit() : fit()));
 $('view3d').addEventListener('click', toggle3d);
+$('diagram').addEventListener('click', () => vscode.postMessage({ type: 'diagram' }));
 $('search').addEventListener('input', (event) => renderPalette(event.target.value));
 $('parts').addEventListener('click', (event) => {
   const type = event.target.dataset?.add;

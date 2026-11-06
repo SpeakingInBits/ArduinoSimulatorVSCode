@@ -37,6 +37,24 @@ const pinOf = (doc, id, pin, catalog) => {
   return catalog.pinPosition(part, definition);
 };
 
+async function waitForDiagram(diagramEditor, ready) {
+  for (let i = 0; i < 100; i++) {
+    if (diagramEditor.shown && ready(diagramEditor.shown)) return diagramEditor.shown;
+    await sleep(100);
+  }
+  throw new Error(`The diagram never showed what was expected: ${JSON.stringify(diagramEditor.shown)}`);
+}
+
+// The open circuit diagram, which fails the test if circuit.json opened some other way.
+async function diagramTab() {
+  for (let i = 0; i < 50; i++) {
+    const tab = vscode.window.tabGroups.all.flatMap((group) => group.tabs).find((item) => item.input?.viewType === 'metroSim.diagram');
+    if (tab) return tab;
+    await sleep(100);
+  }
+  throw new Error('circuit.json did not open as a diagram');
+}
+
 async function waitFor3d(step, ready) {
   for (let i = 0; i < 100; i++) {
     const { view3d } = await step({ action: 'read' });
@@ -105,6 +123,27 @@ async function run() {
     const saved = JSON.parse(fs.readFileSync(path.join(folder, 'circuit.json'), 'utf8'));
     report.steps.savedWires = saved.wires.length;
     if (saved.wires.length !== 8) throw new Error('circuit.json was not saved');
+
+    // Opening circuit.json shows the diagram, inside the webview's security policy, and it
+    // follows what the builder saves.
+    const { diagramEditor } = extension.exports;
+    // Not a preview, which would replace code.py and leave the group empty once it closes.
+    await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(path.join(folder, 'circuit.json')), { viewColumn: vscode.ViewColumn.One, preview: false });
+    const opened = await diagramTab();
+    report.steps.diagram = await waitForDiagram(diagramEditor, (shown) => shown.parts === 4);
+    if (report.steps.diagram.wires < 3 || report.steps.diagram.flags < 4) throw new Error(`The diagram is wrong: ${JSON.stringify(report.steps.diagram)}`);
+    await step({ action: 'palette', type: 'resistor' });
+    await waitForDiagram(diagramEditor, (shown) => shown.parts === 5);
+    await step({ action: 'key', key: 'z', ctrl: true });
+    await waitForDiagram(diagramEditor, (shown) => shown.parts === 4);
+    await vscode.window.tabGroups.close(opened);
+
+    // The builder's button opens it too.
+    diagramEditor.shown = undefined;
+    await step({ action: 'click', selector: '#diagram' });
+    const fromButton = await diagramTab();
+    await waitForDiagram(diagramEditor, (shown) => shown.parts === 4);
+    await vscode.window.tabGroups.close(fromButton);
 
     // Run it, then use the part on the canvas and the slider.
     await step({ action: 'click', selector: '#run' });
@@ -247,6 +286,10 @@ async function run() {
     const broken = await step({ action: 'read' });
     report.steps.brokenCircuitError = broken.loadError;
     if (!broken.loadError) throw new Error('A broken circuit.json was not reported');
+    await vscode.commands.executeCommand('metroSim.diagram');
+    const brokenDiagram = await diagramTab();
+    report.steps.brokenDiagram = (await waitForDiagram(diagramEditor, (shown) => shown.problem)).problem;
+    await vscode.window.tabGroups.close(brokenDiagram);
     await step({ action: 'palette', type: 'resistor' });
     await sleep(600);
     if (!fs.readFileSync(circuitFile, 'utf8').startsWith('not json ')) throw new Error('A broken circuit.json was overwritten');
