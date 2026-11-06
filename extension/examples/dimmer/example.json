@@ -1,0 +1,5 @@
+{
+  "title": "Potentiometer dimmer",
+  "description": "Read an analog input and dim an LED with PWM.",
+  "libraries": []
+}

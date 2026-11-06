@@ -1,0 +1,7 @@
+{
+  "title": "Servo sweep",
+  "description": "Drive a servo with the adafruit_motor library.",
+  "libraries": [
+    "adafruit_motor"
+  ]
+}

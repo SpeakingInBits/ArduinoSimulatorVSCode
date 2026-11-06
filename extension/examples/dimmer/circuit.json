@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "board",
+      "type": "metro-m0-express",
+      "x": 40,
+      "y": 40,
+      "rotation": 0,
+      "props": {}
+    },
+    {
+      "id": "pot1",
+      "type": "potentiometer",
+      "x": 360,
+      "y": 260,
+      "rotation": 0,
+      "props": {
+        "ohms": 10000
+      }
+    },
+    {
+      "id": "r1",
+      "type": "resistor",
+      "x": 120,
+      "y": 300,
+      "rotation": 0,
+      "props": {
+        "ohms": 220
+      }
+    },
+    {
+      "id": "led1",
+      "type": "led",
+      "x": 190,
+      "y": 290,
+      "rotation": 0,
+      "props": {
+        "color": "blue"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "wire1",
+      "from": {
+        "part": "board",
+        "pin": "3V"
+      },
+      "to": {
+        "part": "pot1",
+        "pin": "2"
+      },
+      "points": [],
+      "color": "#d33"
+    },
+    {
+      "id": "wire2",
+      "from": {
+        "part": "pot1",
+        "pin": "1"
+      },
+      "to": {
+        "part": "board",
+        "pin": "GND1"
+      },
+      "points": [],
+      "color": "#222"
+    },
+    {
+      "id": "wire3",
+      "from": {
+        "part": "pot1",
+        "pin": "W"
+      },
+      "to": {
+        "part": "board",
+        "pin": "A0"
+      },
+      "points": [],
+      "color": "#2e9e4f"
+    },
+    {
+      "id": "wire4",
+      "from": {
+        "part": "board",
+        "pin": "D5"
+      },
+      "to": {
+        "part": "r1",
+        "pin": "1"
+      },
+      "points": [],
+      "color": "#2e9e4f"
+    },
+    {
+      "id": "wire5",
+      "from": {
+        "part": "r1",
+        "pin": "2"
+      },
+      "to": {
+        "part": "led1",
+        "pin": "A"
+      },
+      "points": [],
+      "color": "#2e9e4f"
+    },
+    {
+      "id": "wire6",
+      "from": {
+        "part": "led1",
+        "pin": "K"
+      },
+      "to": {
+        "part": "board",
+        "pin": "GND2"
+      },
+      "points": [],
+      "color": "#222"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+firmware/
+libs/
+stubs/
+node_modules/
+*.vsix
