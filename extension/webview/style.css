@@ -119,6 +119,14 @@ body.running .part.interactive { cursor: pointer; }
 .pin-mark { fill: #ffd60a; stroke: #000; stroke-width: 0.6; pointer-events: none; }
 .net-mark { fill: none; stroke: #ffd60a; stroke-width: 0.8; opacity: 0.8; pointer-events: none; }
 
+/* Covers the 2D canvas rather than replacing it, so the canvas keeps its size for the editor. */
+#stage3d { position: absolute; inset: 0; background-color: #56636d; }
+#stage3d[hidden] { display: none; }
+#stage3d canvas { display: block; width: 100%; height: 100%; outline: none; touch-action: none; cursor: grab; }
+#stage3d canvas:active { cursor: grabbing; }
+#stage3d canvas:focus-visible { outline: 1px solid var(--vscode-focusBorder, #39f); outline-offset: -1px; }
+.hint { position: absolute; left: 8px; bottom: 6px; margin: 0; color: #fffc; font-size: 11px; pointer-events: none; }
+
 .tooltip {
   position: absolute;
   pointer-events: none;

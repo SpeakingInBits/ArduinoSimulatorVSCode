@@ -37,6 +37,15 @@ const pinOf = (doc, id, pin, catalog) => {
   return catalog.pinPosition(part, definition);
 };
 
+async function waitFor3d(step, ready) {
+  for (let i = 0; i < 100; i++) {
+    const { view3d } = await step({ action: 'read' });
+    if (view3d?.frames > 0 && view3d.artDrawn > 0 && ready(view3d)) return view3d;
+    await sleep(100);
+  }
+  throw new Error('The 3D view never drew what was expected');
+}
+
 async function run() {
   const folder = process.env.SIM_TEST_FOLDER;
   const output = process.env.SIM_TEST_OUTPUT;
@@ -111,6 +120,17 @@ async function run() {
     await waitBright(step, led, false);
     await step({ action: 'slider', key: `${pot}:position`, value: 0.25 });
     report.steps.sliderToConsoleMs = (await step({ action: 'waitConsole', text: 'POT 10' })).ms;
+
+    // The 3D view opens during a run, inside the webview's security policy, and follows the
+    // simulation: turning the potentiometer redraws its art.
+    await step({ action: 'click', selector: '#view3d' });
+    const view3d = await waitFor3d(step, () => true);
+    report.steps.view3d = view3d;
+    if (view3d.artFailed > 0 || view3d.parts !== doc.parts.length || view3d.wires !== 8) throw new Error(`3D view is wrong: ${JSON.stringify(view3d)}`);
+    await step({ action: 'slider', key: `${pot}:position`, value: 0.75 });
+    report.steps.view3dFollowsRun = (await waitFor3d(step, (now) => now.artDrawn > view3d.artDrawn)).artDrawn;
+    await step({ action: 'click', selector: '#view3d' });
+    if ((await step({ action: 'read' })).view3d !== null) throw new Error('3D view did not close');
 
     // Stop, and the page returns to editing.
     await step({ action: 'click', selector: '#stop' });
