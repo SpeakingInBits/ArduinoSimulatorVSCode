@@ -2,6 +2,7 @@
 import { BOARD_TYPE, CATALOG, CATEGORIES, defaultProps, definition, emptyCircuit, pinPosition } from '../shared/catalog.js';
 import { buildNets, pinKey } from '../shared/nets.js';
 import { holePattern, partArt } from './art.js';
+import { SerialFilter, typeInto } from './serial-text.js';
 
 const vscode = acquireVsCodeApi();
 const GRID = 10;
@@ -649,27 +650,12 @@ $('controls').addEventListener('click', (event) => {
 // --- Serial console ---
 
 const consoleElement = $('console');
-let partialSerial = '';
-
-// The end of an escape sequence that has not finished arriving. The length limit stops a stray
-// escape character from holding back everything printed after it.
-const UNFINISHED_ESCAPE = /\x1b(?:\][^\x1b]{0,200}\x1b?|\[[0-9;]{0,20})?$/;
+const serialFilter = new SerialFilter();
 
 function appendSerial(chunk) {
-  // An escape sequence can arrive split across batches, so hold back an unfinished one.
-  let text = partialSerial + chunk;
-  const unfinished = text.match(UNFINISHED_ESCAPE);
-  partialSerial = unfinished ? unfinished[0] : '';
-  if (unfinished) text = text.slice(0, unfinished.index);
-  const title = [...text.matchAll(/\x1b\]0;(.*?)\x1b\\/g)].at(-1);
-  if (title) $('board-title').textContent = title[1];
-  const clean = text.replace(/\x1b\].*?\x1b\\/g, '').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\r/g, '');
-  let content = consoleElement.textContent;
-  for (const character of clean) {
-    if (character === '\b') content = content.slice(0, -1);
-    else content += character;
-  }
-  consoleElement.textContent = content.slice(-60000);
+  const { text, title } = serialFilter.push(chunk);
+  if (title !== undefined) $('board-title').textContent = title;
+  consoleElement.textContent = typeInto(consoleElement.textContent, text).slice(-60000);
   consoleElement.scrollTop = consoleElement.scrollHeight;
 }
 
@@ -825,7 +811,7 @@ const handlers = {
   serial: (message) => appendSerial(message.text),
   clearConsole() {
     consoleElement.textContent = '';
-    partialSerial = '';
+    serialFilter.reset();
   },
   frame: applyFrame,
   running: (message) => setRunning(message.running),
