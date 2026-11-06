@@ -30,3 +30,10 @@ Then open the `extension` folder in VS Code and press F5, or run it directly:
 ```bash
 code --extensionDevelopmentPath="$PWD/extension"
 ```
+
+## Release it
+
+The Release workflow builds the firmware, runs the tests and publishes a GitHub release with the
+`.vsix`. Run it from the Actions tab on `main`, and choose what kind of change the release holds.
+Pull requests that change the packaging build the `.vsix` without releasing it, and the file is
+attached to the workflow run.
