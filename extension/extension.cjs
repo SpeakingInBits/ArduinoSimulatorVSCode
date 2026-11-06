@@ -11,6 +11,16 @@ const IGNORED = new Set(['.git', '.vscode', 'typings', 'node_modules', '__pycach
 const MAX_PROJECT_BYTES = 2 * 1024 * 1024;
 const SAVE_DELAY_MS = 300;
 
+// Everything Export can save. `suffix` keeps a project's files apart in one folder.
+const EXPORTS = [
+  { format: 'package', label: 'Project package', detail: 'The program, circuit and libraries in one file. Open it with Import.', extension: 'metrosim', suffix: '' },
+  { format: 'circuit-png', label: 'Circuit picture (PNG)', detail: 'The build as it looks on the canvas.', extension: 'png', suffix: '-circuit' },
+  { format: 'circuit-svg', label: 'Circuit picture (SVG)', detail: 'The same, and it stays sharp at any size.', extension: 'svg', suffix: '-circuit' },
+  { format: 'diagram-png', label: 'Circuit diagram (PNG)', detail: 'The schematic, on a white page.', extension: 'png', suffix: '-diagram' },
+  { format: 'diagram-svg', label: 'Circuit diagram (SVG)', detail: 'The same, and it stays sharp at any size.', extension: 'svg', suffix: '-diagram' },
+  { format: 'parts-csv', label: 'Parts list (CSV)', detail: 'What to gather to build it, for a spreadsheet.', extension: 'csv', suffix: '-parts' },
+];
+
 // Libraries each library needs in order to import.
 const LIBRARY_NEEDS = {
   adafruit_character_lcd: ['adafruit_bus_device', 'adafruit_mcp230xx'],
@@ -104,8 +114,8 @@ class Session {
     this.circuitError = undefined;
     this.pendingSave = undefined;
     this.queue = Promise.resolve();
-    this.pendingTests = new Map();
-    this.nextTest = 1;
+    this.pendingReplies = new Map();
+    this.nextRequest = 1;
   }
 
   post(message) {
@@ -234,9 +244,11 @@ class Session {
       case 'stop': this.stop(); break;
       case 'input': this.board?.write(message.text); break;
       case 'control': this.board?.setControl(message.part, message.control, message.value); break;
-      case 'testResult':
-        this.pendingTests.get(message.id)?.(message.result);
-        this.pendingTests.delete(message.id);
+      case 'export': this.exportProject(); break;
+      case 'import': vscode.commands.executeCommand('metroSim.importPackage'); break;
+      case 'reply':
+        this.pendingReplies.get(message.id)?.(message.result);
+        this.pendingReplies.delete(message.id);
         break;
       default: break;
     }
@@ -308,13 +320,59 @@ class Session {
     this.post({ type: 'running', running: true });
   }
 
+  // Sends the page a message and waits for its reply.
+  ask(message) {
+    const id = this.nextRequest++;
+    return new Promise((resolve) => {
+      this.pendingReplies.set(id, resolve);
+      this.post({ ...message, id });
+    });
+  }
+
   // Used by the automated tests to drive the page.
   testStep(step) {
-    const id = this.nextTest++;
-    return new Promise((resolve) => {
-      this.pendingTests.set(id, resolve);
-      this.post({ type: 'test', id, step });
+    return this.ask({ type: 'test', step });
+  }
+
+  async packageText() {
+    const { createPackage } = await import('./shared/project-package.js');
+    const { emptyCircuit } = await import('./shared/catalog.js');
+    this.flushSave();
+    await saveProjectFiles(this.folder);
+    const circuit = await this.readCircuit();
+    return createPackage({ name: path.basename(this.folder), circuit: circuit ?? emptyCircuit(), files: readProjectFiles(this.folder) });
+  }
+
+  // Writes one kind of export. The page draws everything except the package, which is read from disk.
+  async exportTo(format, file) {
+    if (format === 'package') {
+      fs.writeFileSync(file, await this.packageText());
+      return;
+    }
+    const reply = await this.ask({ type: 'export', format });
+    if (reply.error) throw new Error(reply.error);
+    fs.writeFileSync(file, Buffer.from(reply.data, reply.encoding));
+  }
+
+  async exportProject() {
+    if (this.circuitError) {
+      this.showCircuitError();
+      return;
+    }
+    const pick = await vscode.window.showQuickPick(EXPORTS, { placeHolder: 'What would you like to save?' });
+    if (!pick) return;
+    const name = `${path.basename(this.folder)}${pick.suffix}.${pick.extension}`;
+    const target = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(path.join(this.folder, name)),
+      filters: { [pick.label]: [pick.extension] },
     });
+    if (!target) return;
+    try {
+      await this.exportTo(pick.format, target.fsPath);
+      vscode.window.showInformationMessage(`Saved ${path.basename(target.fsPath)}.`);
+    } catch (error) {
+      vscode.window.showErrorMessage(`Could not export: ${error.message}`);
+    }
   }
 }
 
@@ -390,6 +448,43 @@ async function newProject(context) {
   fs.rmSync(path.join(target, 'example.json'));
   for (const library of pick.libraries) installLibrary(context, target, library);
   await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(target));
+}
+
+// Writes a package out as a new folder and returns it. Nothing in the package runs, and it can
+// only add files under the new folder.
+async function unpackProject(file, parent) {
+  const { MAX_PACKAGE_BYTES, readPackage } = await import('./shared/project-package.js');
+  if (fs.statSync(file).size > MAX_PACKAGE_BYTES) throw new Error('This file is too large to be a project package.');
+  const { name, circuit, files } = readPackage(fs.readFileSync(file, 'utf8'));
+  const target = path.join(parent, name);
+  if (fs.existsSync(target)) throw new Error(`${target} already exists.`);
+  for (const { path: relative, data } of files) {
+    const destination = path.join(target, ...relative.split('/'));
+    if (!isInside(target, destination)) throw new Error(`The package has an unsafe file: ${relative}.`);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.writeFileSync(destination, data);
+  }
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(path.join(target, CIRCUIT_FILE), `${JSON.stringify(circuit, null, 2)}\n`);
+  return target;
+}
+
+async function importPackage() {
+  const { PACKAGE_EXTENSION } = await import('./shared/project-package.js');
+  const files = await vscode.window.showOpenDialog({
+    canSelectMany: false, openLabel: 'Import', filters: { 'Project package': [PACKAGE_EXTENSION] },
+  });
+  if (!files) return;
+  const parent = await vscode.window.showOpenDialog({
+    canSelectFolders: true, canSelectFiles: false, openLabel: 'Create project here',
+  });
+  if (!parent) return;
+  try {
+    const target = await unpackProject(files[0].fsPath, parent[0].fsPath);
+    await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(target));
+  } catch (error) {
+    vscode.window.showErrorMessage(`Could not import: ${error.message}`);
+  }
 }
 
 async function addLibrary(context) {
@@ -478,6 +573,10 @@ function activate(context) {
   command('metroSim.addLibrary', () => addLibrary(context));
   command('metroSim.setupEditor', () => setupEditor(context));
   command('metroSim.copyToBoard', copyToBoard);
+  command('metroSim.export', async () => {
+    if (await session.open(projectFolder())) await session.exportProject();
+  });
+  command('metroSim.importPackage', importPackage);
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(DIAGRAM_VIEW, diagramEditor),
     vscode.window.onDidChangeActiveTextEditor((editor) => session.noteEditor(editor)),
@@ -489,7 +588,7 @@ function activate(context) {
       },
     },
   );
-  return { session, diagramEditor };
+  return { session, diagramEditor, unpackProject };
 }
 
 module.exports = { activate };

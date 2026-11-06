@@ -13,7 +13,7 @@
   "main": "./extension.cjs",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "test:unit": "node --test test/circuit.test.js test/console.test.js test/layout3d.test.js test/diagram.test.js",
+    "test:unit": "node --test test/circuit.test.js test/checks.test.js test/editing.test.js test/console.test.js test/layout3d.test.js test/diagram.test.js",
     "test:e2e": "node scripts/run-e2e.js",
     "assets": "node scripts/copy-assets.js"
   },
@@ -35,7 +35,9 @@
       { "command": "metroSim.newProject", "title": "New Project from Example", "category": "Metro Simulator" },
       { "command": "metroSim.addLibrary", "title": "Add Library to Project", "category": "Metro Simulator" },
       { "command": "metroSim.setupEditor", "title": "Set Up CircuitPython Autocomplete", "category": "Metro Simulator" },
-      { "command": "metroSim.copyToBoard", "title": "Copy Project to CIRCUITPY Drive", "category": "Metro Simulator" }
+      { "command": "metroSim.copyToBoard", "title": "Copy Project to CIRCUITPY Drive", "category": "Metro Simulator" },
+      { "command": "metroSim.export", "title": "Export Project", "category": "Metro Simulator" },
+      { "command": "metroSim.importPackage", "title": "Import Project Package", "category": "Metro Simulator" }
     ],
     "menus": {
       "editor/title/run": [

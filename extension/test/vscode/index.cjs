@@ -354,6 +354,75 @@ async function run() {
     await step({ action: 'waitConsole', text: 'OTHER PROJECT' });
     await step({ action: 'click', selector: '#stop' });
     await step({ action: 'waitRunning', running: false });
+
+    // A meter reads the real board, a part with no resistor smokes, and a loose part turns grey.
+    const meter = (await step({ action: 'palette', type: 'multimeter' })).id;
+    await step({ action: 'move', id: meter, grab: { x: 30, y: 40 }, x: 400, y: 80 });
+    const doomed = (await step({ action: 'palette', type: 'led' })).id;
+    await step({ action: 'move', id: doomed, grab: { x: 5, y: -1 }, x: 520, y: 80 });
+    const loose = (await step({ action: 'palette', type: 'led' })).id;
+    await step({ action: 'move', id: loose, grab: { x: 5, y: -1 }, x: 580, y: 80 });
+    const pushed = (await step({ action: 'palette', type: 'button' })).id;
+    await step({ action: 'move', id: pushed, grab: { x: 10, y: 15 }, x: 640, y: 80 });
+    await step({ action: 'fit' });
+    await wire(meter, 'V', 'board', '3V');
+    await wire(meter, 'COM', 'board', 'GND1');
+    await wire(doomed, 'A', 'board', '5V');
+    await wire(doomed, 'K', 'board', 'GND2');
+    await wire(pushed, '1a', 'board', 'D3');
+    await step({ action: 'click', selector: '#run' });
+    await step({ action: 'waitView', id: meter, equals: [['reading', '3.30'], ['unit', 'V']] });
+    await step({ action: 'waitView', id: doomed, equals: [['burned', true]] });
+    await sleep(200);
+    const damaged = await step({ action: 'read' });
+    report.steps.damage = { smoke: damaged.smoke, idle: damaged.idle };
+    if (damaged.smoke < 1) throw new Error('The burned LED has no smoke');
+    if (damaged.idle.join() !== loose) throw new Error(`Wrong parts greyed out: ${damaged.idle}`);
+
+    // Parts work by clicking in 3D as they do in 2D, and anywhere else still turns the view.
+    await step({ action: 'click', selector: '#view3d' });
+    await waitFor3d(step, () => true);
+    await sleep(300);
+    const missed = await step({ action: 'press3d' });
+    await step({ action: 'release3d' });
+    if (missed.held !== 0) throw new Error('A press on empty space pressed something');
+    const held = await step({ action: 'press3d', id: pushed });
+    report.steps.press3d = held;
+    if (held.held !== 1) throw new Error(`The 3D press missed the button: ${JSON.stringify(held)}`);
+    await step({ action: 'waitView', id: pushed, equals: [['pressed', true]] });
+    await step({ action: 'release3d' });
+    await step({ action: 'waitView', id: pushed, equals: [['pressed', false]] });
+    await step({ action: 'press3d', id: meter });
+    await step({ action: 'release3d' });
+    await step({ action: 'waitView', id: meter, equals: [['mode', 1]] });
+    await step({ action: 'click', selector: '#view3d' });
+
+    // Everything exports from the real page, and a package comes back as the same project.
+    const exported = path.join(path.dirname(folder), `${path.basename(folder)}-exports`);
+    fs.mkdirSync(exported, { recursive: true });
+    const exportPath = (name) => path.join(exported, name);
+    await session.exportTo('circuit-png', exportPath('circuit.png'));
+    await session.exportTo('diagram-png', exportPath('diagram.png'));
+    await session.exportTo('circuit-svg', exportPath('circuit.svg'));
+    await session.exportTo('parts-csv', exportPath('parts.csv'));
+    await session.exportTo('package', exportPath('project.metrosim'));
+    await step({ action: 'click', selector: '#stop' });
+    await step({ action: 'waitRunning', running: false });
+    for (const name of ['circuit.png', 'diagram.png']) {
+      if (fs.readFileSync(exportPath(name)).toString('latin1', 1, 4) !== 'PNG') throw new Error(`${name} is not a PNG`);
+    }
+    if (!fs.readFileSync(exportPath('circuit.svg'), 'utf8').startsWith('<svg')) throw new Error('The picture is not an SVG');
+    if (!fs.readFileSync(exportPath('parts.csv'), 'utf8').includes('1,Multimeter')) throw new Error('The parts list lost the meter');
+
+    const { unpackProject } = extension.exports;
+    const restored = await unpackProject(exportPath('project.metrosim'), exported);
+    report.steps.restored = path.basename(restored);
+    if (fs.readFileSync(path.join(restored, 'code.py'), 'utf8') !== 'print("OTHER PROJECT")\n') throw new Error('The package changed the program');
+    const original = fs.readFileSync(path.join(other, 'circuit.json'), 'utf8');
+    if (fs.readFileSync(path.join(restored, 'circuit.json'), 'utf8') !== original) throw new Error('The package changed the circuit');
+    let refused = false;
+    await unpackProject(exportPath('project.metrosim'), exported).catch(() => { refused = true; });
+    if (!refused) throw new Error('Importing replaced an existing folder');
     report.passed = true;
   } catch (error) {
     report.passed = false;

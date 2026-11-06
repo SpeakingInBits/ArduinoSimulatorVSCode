@@ -54,11 +54,11 @@ function breadboardGroups(columns) {
   return groups;
 }
 
-export const CATEGORIES = ['Boards', 'Basics', 'Input', 'Sensors', 'Output', 'Displays', 'Chips & drivers', 'Power'];
+export const CATEGORIES = ['Boards', 'Basics', 'Input', 'Sensors', 'Output', 'Displays', 'Chips & drivers', 'Power', 'Tools'];
 
 export const CATALOG = {
   [BOARD_TYPE]: {
-    name: 'Metro M0 Express', category: 'Boards', w: 290, h: 210, fixed: true,
+    name: 'Metro M0 Express', category: 'Boards', w: 290, h: 210, fixed: true, powers: true,
     pins: boardPins(),
     groups: [['GND1', 'GND2', 'GND3']],
   },
@@ -74,12 +74,12 @@ export const CATALOG = {
   resistor: {
     name: 'Resistor', category: 'Basics', w: 40, h: 0, description: 'Limits current. Bands show its value.',
     pins: [pin('1', 0, 0), pin('2', 40, 0)],
-    props: { ohms: { label: 'Resistance', type: 'choice', unit: 'ohm', choices: RESISTOR_VALUES, default: 220 } },
+    props: { ohms: { label: 'Resistance', type: 'choice', unit: 'ohm', choices: RESISTOR_VALUES, default: 220, custom: true } },
   },
   capacitor: {
     name: 'Capacitor', category: 'Basics', w: 10, h: 10, description: 'Stores charge. Acts as an open circuit at DC.',
     pins: [pin('+', 0, 10), pin('-', 10, 10)],
-    props: { microfarads: { label: 'Capacitance', type: 'choice', unit: 'uF', choices: [0.1, 1, 10, 100, 220, 1000], default: 100 } },
+    props: { microfarads: { label: 'Capacitance', type: 'choice', unit: 'uF', choices: [0.1, 1, 10, 100, 220, 1000], default: 100, custom: true } },
   },
   diode: {
     name: 'Diode', category: 'Basics', w: 40, h: 0, description: '1N4001 style. Lets current flow one way.',
@@ -310,9 +310,49 @@ export const CATALOG = {
 
   battery: {
     name: 'Battery', category: 'Power', w: 30, h: 40, description: 'Separate supply for motors. Join its - to GND.',
+    powers: true,
     pins: [pin('+', 0, 40), pin('-', 30, 40)],
     props: { volts: { label: 'Voltage', type: 'choice', unit: 'V', choices: [3, 4.5, 6, 9], default: 9 } },
   },
+
+  multimeter: {
+    name: 'Multimeter', category: 'Tools', w: 60, h: 80,
+    description: 'Measures volts and ohms across two points. To measure amps, put it in series.',
+    pins: [{ ...pin('V', 20, 80, 'Red probe'), wire: '#d33' }, { ...pin('COM', 40, 80, 'Black probe'), wire: '#222' }],
+    controls: [{ id: 'mode', kind: 'cycle', label: 'Measure', options: ['Volts', 'Amps', 'Ohms'] }],
+  },
+  note: {
+    name: 'Note', category: 'Tools', w: 130, h: 22, annotation: true, description: 'Text on the canvas. It is not part of the circuit.',
+    pins: [],
+    props: { text: { label: 'Text', type: 'text', default: 'Note' } },
+  },
+};
+
+// The supply pins of each powered part: positive, negative and the highest safe voltage.
+export const SUPPLY_LIMITS = {
+  tmp36: ['VS', 'GND', 5.5],
+  dht: ['VCC', 'GND', 5.5],
+  ds18b20: ['VDD', 'GND', 5.5],
+  hcsr04: ['VCC', 'GND', 5.5],
+  pir: ['VCC', 'GND', 20],
+  'sound-sensor': ['VCC', 'GND', 5.5],
+  'water-sensor': ['+', '-', 5.5],
+  'ir-receiver': ['VCC', 'GND', 5.5],
+  mpu6050: ['VCC', 'GND', 5.5],
+  mcp9808: ['VCC', 'GND', 5.5],
+  ds3231: ['VCC', 'GND', 5.5],
+  'rotary-encoder': ['+', 'GND', 5.5],
+  joystick: ['+5V', 'GND', 5.5],
+  servo: ['V+', 'GND', 6.5],
+  'stepper-uln2003': ['+', '-', 12.5],
+  'relay-module': ['VCC', 'GND', 5.5],
+  neopixel: ['5V', 'GND', 5.5],
+  'led-matrix': ['VCC', 'GND', 5.5],
+  lcd1602: ['VDD', 'VSS', 5.5],
+  'lcd-i2c': ['VCC', 'GND', 5.5],
+  'oled-ssd1306': ['VCC', 'GND', 5.5],
+  'shift-register': ['VCC', 'GND', 6],
+  l293d: ['VCC', 'GND1', 7],
 };
 
 export function definition(type) {
@@ -337,9 +377,47 @@ export function rotatePoint(x, y, rotation) {
   }
 }
 
+// A flipped part is mirrored left to right before it is rotated.
 export function pinPosition(part, pinDef) {
-  const point = rotatePoint(pinDef.x, pinDef.y, part.rotation ?? 0);
+  const point = rotatePoint(part.flip ? -pinDef.x : pinDef.x, pinDef.y, part.rotation ?? 0);
   return { x: part.x + point.x, y: part.y + point.y };
+}
+
+const NOTE_LINE_CHARS = 30;
+const NOTE_LINE_HEIGHT = 10;
+
+// A note's text in the lines it is drawn on.
+export function noteLines(text = '') {
+  const lines = [];
+  for (const paragraph of String(text).split('\n')) {
+    let line = '';
+    for (const word of paragraph.split(' ')) {
+      if (line && line.length + word.length + 1 > NOTE_LINE_CHARS) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = line ? `${line} ${word}` : word;
+      }
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+// A part's size before rotation. A note grows with its text.
+export function partSize(part) {
+  const entry = definition(part.type);
+  if (!entry.annotation) return { w: entry.w, h: entry.h };
+  return { w: entry.w, h: noteLines(part.props?.text).length * NOTE_LINE_HEIGHT + 6 };
+}
+
+// The area a part covers on the canvas, with room for its pin labels.
+export function partBounds(part) {
+  const { w, h } = partSize(part);
+  const corners = [[-6, -14], [w + 6, -14], [-6, h + 8], [w + 6, h + 8]].map(([x, y]) => pinPosition(part, { x, y }));
+  const xs = corners.map((p) => p.x);
+  const ys = corners.map((p) => p.y);
+  return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
 }
 
 // Runtime controls in a stable order, so both sides of the shared memory agree on slots.

@@ -78,14 +78,14 @@ function connect(doc) {
     return nets.get(root);
   };
 
-  const items = doc.parts.filter((part) => !definition(part.type).background).map((part) => {
+  const items = doc.parts.filter((part) => !definition(part.type).background && !definition(part.type).annotation).map((part) => {
     const entry = definition(part.type);
     for (const pinDef of entry.pins) {
       const net = netAt(part, pinDef.id);
       net.real.push({ part, pin: pinDef.id });
       noteRail(net, entry, part, pinDef.id);
     }
-    return { part, entry, type: part.type, id: part.id, name: entry.name, value: partValue(part), netAt: (pinId) => netAt(part, pinId) };
+    return { part, entry, type: part.type, id: part.id, name: part.label || entry.name, value: partValue(part), netAt: (pinId) => netAt(part, pinId) };
   });
   nets.forEach(classify);
 

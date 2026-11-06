@@ -356,7 +356,9 @@ function disposeTree(object) {
 }
 
 // Throws if this computer can't show WebGL at all.
-export function createScene3d(container) {
+// `pressable` gives the ids of the parts that respond to a press right now. `press` and `release`
+// are called as one is pressed and let go.
+export function createScene3d(container, { pressable = () => new Set(), press = () => {}, release = () => {} } = {}) {
   const hardware = hasGraphicsHardware();
   const renderer = new THREE.WebGLRenderer({ antialias: hardware });
   const canvas = renderer.domElement;
@@ -428,6 +430,7 @@ export function createScene3d(container) {
     const textureLimit = hardware ? 1536 : 1024;
 
     for (const part of doc.parts) {
+      if (definition(part.type).annotation) continue; // Notes belong to the drawing, not the bench.
       const root = new THREE.Group();
       const materials = new Map();
       const solid = (color, options = {}) => {
@@ -436,8 +439,10 @@ export function createScene3d(container) {
         return materials.get(key);
       };
       const update = (BUILDERS[part.type] ?? standardPart)({ part, root, solid, events, glowTexture, textureLimit });
+      root.userData.part = part.id;
       root.position.set(part.x, partBase(part, supports), part.y);
       root.rotation.y = -THREE.MathUtils.degToRad(part.rotation ?? 0);
+      if (part.flip) root.scale.x = -1;
       circuit.add(root);
       parts.set(part.id, { update, view: null });
     }
@@ -510,16 +515,47 @@ export function createScene3d(container) {
     invalidate();
   }
 
+  // --- Pressing parts ---
+
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+
+  // The first pressable part along the pointer's line. Wires and boards are looked through, which
+  // keeps small parts easy to hit from any angle.
+  function pressableAt(event) {
+    const targets = pressable();
+    if (targets.size === 0) return undefined;
+    const box = canvas.getBoundingClientRect();
+    pointer.set(((event.clientX - box.left) / box.width) * 2 - 1, 1 - ((event.clientY - box.top) / box.height) * 2);
+    raycaster.setFromCamera(pointer, camera);
+    for (const hit of raycaster.intersectObject(circuit, true)) {
+      for (let object = hit.object; object; object = object.parent) {
+        if (targets.has(object.userData.part)) return object.userData.part;
+      }
+    }
+    return undefined;
+  }
+
   let dragging = null;
+  let pressing = false;
   const moves = (event) => event.shiftKey || event.altKey || event.button === 1 || event.button === 2;
   canvas.addEventListener('contextmenu', (event) => event.preventDefault());
   canvas.addEventListener('pointerdown', (event) => {
     canvas.focus();
     canvas.setPointerCapture(event.pointerId);
+    const part = event.button === 0 && !moves(event) ? pressableAt(event) : undefined;
+    if (part !== undefined) {
+      pressing = true;
+      press(part);
+      return;
+    }
     dragging = { x: event.clientX, y: event.clientY, moving: moves(event) };
   });
   canvas.addEventListener('pointermove', (event) => {
-    if (!dragging) return;
+    if (!dragging) {
+      if (!pressing) canvas.classList.toggle('pressable', pressableAt(event) !== undefined);
+      return;
+    }
     const dx = event.clientX - dragging.x;
     const dy = event.clientY - dragging.y;
     dragging.x = event.clientX;
@@ -527,7 +563,11 @@ export function createScene3d(container) {
     if (dragging.moving) moveBy(dx, dy);
     else turnBy(-dx * 0.008, -dy * 0.008);
   });
-  const stopDragging = () => { dragging = null; };
+  const stopDragging = () => {
+    dragging = null;
+    if (pressing) release();
+    pressing = false;
+  };
   canvas.addEventListener('pointerup', stopDragging);
   canvas.addEventListener('pointercancel', stopDragging);
   canvas.addEventListener('wheel', (event) => {
@@ -575,6 +615,13 @@ export function createScene3d(container) {
       }
       for (const part of doc.parts) updatePart(part, viewOf(part));
       invalidate();
+    },
+    // Where a part appears on the screen, for the automated tests.
+    screenPoint(id) {
+      const root = circuit.children.find((child) => child.userData.part === id);
+      const center = new THREE.Box3().setFromObject(root).getCenter(new THREE.Vector3()).project(camera);
+      const box = canvas.getBoundingClientRect();
+      return { clientX: box.left + ((center.x + 1) / 2) * box.width, clientY: box.top + ((1 - center.y) / 2) * box.height };
     },
     info: () => ({
       ...stats,

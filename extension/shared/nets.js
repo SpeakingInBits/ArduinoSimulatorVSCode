@@ -73,3 +73,39 @@ export function buildNets(circuit) {
   }
   return { netOf, netCount: netIds.size, sameNet: (a, b) => sets.find(a) === sets.find(b), find: (key) => sets.find(key) };
 }
+
+// What the running simulation leaves out: parts and wires with no connection to the board or a
+// battery. Nothing can reach them, so they stay as they are however the program runs.
+export function unsimulated(doc) {
+  const { netOf } = buildNets(doc);
+  const placed = doc.parts.filter((part) => {
+    const entry = definition(part.type);
+    return !entry.background && !entry.annotation;
+  });
+  const netsOf = new Map(placed.map((part) => [part, definition(part.type).pins.map((pinDef) => netOf.get(pinKey(part.id, pinDef.id)))]));
+  const partsOn = new Map();
+  for (const [part, nets] of netsOf) {
+    for (const net of nets) {
+      if (!partsOn.has(net)) partsOn.set(net, []);
+      partsOn.get(net).push(part);
+    }
+  }
+  const reached = new Set(placed.filter((part) => definition(part.type).powers));
+  const liveNets = new Set();
+  const queue = [...reached];
+  while (queue.length > 0) {
+    for (const net of netsOf.get(queue.pop())) {
+      if (liveNets.has(net)) continue;
+      liveNets.add(net);
+      for (const part of partsOn.get(net)) {
+        if (reached.has(part)) continue;
+        reached.add(part);
+        queue.push(part);
+      }
+    }
+  }
+  return {
+    parts: new Set(placed.filter((part) => !reached.has(part)).map((part) => part.id)),
+    wires: new Set(doc.wires.filter((wire) => !liveNets.has(netOf.get(pinKey(wire.from.part, wire.from.pin))))),
+  };
+}

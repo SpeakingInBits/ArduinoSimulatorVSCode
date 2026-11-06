@@ -1,6 +1,6 @@
 // The live circuit: turns a saved drawing into solvable electrical groups, tracks the board's
 // pins, runs timed part behaviour and reports what each part should look like.
-import { BOARD_PINS, BOARD_TYPE, controlSlots, definition } from '../shared/catalog.js';
+import { BOARD_PINS, BOARD_TYPE, SUPPLY_LIMITS, controlSlots, definition } from '../shared/catalog.js';
 import { buildNets, pinKey } from '../shared/nets.js';
 import { MODELS } from './models.js';
 import { Solver } from './solver.js';
@@ -12,6 +12,8 @@ const PIN_PULL_OHMS = 40000;
 const DAC_OHMS = 1000;
 const PIN_MAX_AMPS = 0.01;
 const PIN_MAX_VOLTS = 3.6;
+const RAIL_MAX_AMPS = 0.5;
+const REVERSED_SUPPLY_VOLTS = 1;
 const FRAME_MS = 33;
 
 export const PIN_MODE = { OFF: 0, INPUT: 1, OUTPUT: 2, ANALOG_IN: 3, ANALOG_OUT: 4, PWM: 5 };
@@ -149,8 +151,8 @@ export class PartContext {
     return this.circuit.dutyReaching(this.node(pin));
   }
 
-  problem(severity, message) {
-    this.circuit.problem(severity, this.id, message);
+  problem(severity, message, pin) {
+    this.circuit.problem(severity, this.id, message, pin);
   }
 }
 
@@ -325,6 +327,7 @@ export class Circuit {
       e.group.solver.add(e);
     }
     this.groups = [railGroup, ...groupOfRoot.values()];
+    this.railElements = this.elements.filter((e) => nodesOf(e).some((node) => node < 0));
     for (const { node, callback } of this.pending) this.addWatcher(node, callback);
     this.pending = [];
   }
@@ -599,8 +602,10 @@ export class Circuit {
     return pin ? pin.duty : null;
   }
 
-  problem(severity, part, message) {
-    this.problems.set(`${part}:${message}`, { severity, part, message, at: this.now() });
+  // `pin` says where on the part the trouble is, when that matters. A large part such as the board
+  // would otherwise show it in the wrong place.
+  problem(severity, part, message, pin) {
+    this.problems.set(`${part}:${message}`, { severity, part, message, pin, at: this.now() });
   }
 
   // --- Runtime controls from the UI ---
@@ -668,16 +673,62 @@ export class Circuit {
     for (const pin of this.pins.values()) {
       const voltage = this.volts(pin.node);
       if (voltage > PIN_MAX_VOLTS) {
-        this.problem('error', this.boardId, `${pin.name} sees ${voltage.toFixed(1)}V. Metro pins only tolerate 3.3V.`);
+        this.problem('error', this.boardId, `${pin.name} sees ${voltage.toFixed(1)}V. Metro pins only tolerate 3.3V.`, pin.name);
       }
       if (!pin.driver.off) {
         const amps = Math.abs(pin.driver.group.solver.currentThrough(pin.driver));
         if (amps > PIN_MAX_AMPS) {
-          this.problem('error', this.boardId, `${pin.name} is supplying ${(amps * 1000).toFixed(0)}mA, above its 10mA limit. Add a resistor or a transistor.`);
+          this.problem('error', this.boardId, `${pin.name} is supplying ${(amps * 1000).toFixed(0)}mA, above its 10mA limit. Add a resistor or a transistor.`, pin.name);
         }
       }
     }
     if (this.shorted) this.problem('error', this.boardId, 'Short circuit: two power rails are wired together.');
+    for (const [name, node] of [['3V', -1], ['5V', -2]]) {
+      const amps = this.railAmps(node);
+      if (amps > RAIL_MAX_AMPS) {
+        this.problem('error', this.boardId, `The ${name} supply is delivering ${(amps * 1000).toFixed(0)}mA, above its 500mA limit. Look for a short circuit.`, name);
+      }
+    }
+  }
+
+  // Current leaving a fixed rail, through everything wired straight to it.
+  railAmps(node) {
+    let total = 0;
+    for (const e of this.railElements) {
+      if (e.kind === 'npn') {
+        if (e.collector === node) total += e.collectorAmps;
+        if (e.base === node) total += e.baseAmps;
+        if (e.emitter === node) total -= e.collectorAmps + e.baseAmps;
+      } else if (e.kind === 'nmos') {
+        const { solver } = e.group;
+        const amps = e.on ? (solver.v(e.drain) - solver.v(e.source)) / e.onOhms : 0;
+        if (e.drain === node) total += amps;
+        if (e.source === node) total -= amps;
+      } else {
+        const amps = e.group.solver.currentThrough(e);
+        if (e.a === node) total += amps;
+        if (e.b === node) total -= amps;
+      }
+    }
+    return total;
+  }
+
+  // Warns about parts used outside their ratings, which on a real bench would damage them.
+  checkParts() {
+    for (const { part, context, model } of this.parts.values()) {
+      const limit = SUPPLY_LIMITS[part.type];
+      if (limit) {
+        const [positive, negative, maximum] = limit;
+        const volts = context.difference(positive, negative);
+        const { name } = definition(part.type);
+        if (volts > maximum) {
+          context.problem('error', `${name} has ${volts.toFixed(1)}V on ${positive}, above its ${maximum}V limit.`, positive);
+        } else if (volts < -REVERSED_SUPPLY_VOLTS) {
+          context.problem('error', `${name} is wired backwards: ${positive} and ${negative} are swapped.`, positive);
+        }
+      }
+      model.check?.(context);
+    }
   }
 
   frame(now) {
@@ -698,6 +749,7 @@ export class Circuit {
     this.onboard.led = this.onboardLed.amps > 0.0001 ? 1 : 0;
     if (this.onboardDuty(toggling) !== null) this.onboard.led = this.onboardDuty(toggling);
     this.checkPins();
+    this.checkParts();
 
     const views = {};
     for (const [id, entry] of this.parts) {
@@ -712,7 +764,7 @@ export class Circuit {
     for (const [key, problem] of this.problems) {
       if (now - problem.at > 1000) this.problems.delete(key);
     }
-    const problems = [...this.problems.values()].map(({ severity, part, message }) => ({ severity, part, message }));
+    const problems = [...this.problems.values()].map(({ severity, part, message, pin }) => ({ severity, part, message, pin }));
     const boardText = JSON.stringify({ board: this.onboard, problems });
     if (Object.keys(views).length > 0 || boardText !== this.lastBoardText) {
       this.lastBoardText = boardText;
