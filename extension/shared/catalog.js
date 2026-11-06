@@ -353,6 +353,22 @@ export function controlSlots(circuit) {
   return slots;
 }
 
+// Why a saved circuit cannot be used, in words a student can act on, or null if it is fine.
+export function circuitProblem(doc) {
+  if (!Array.isArray(doc?.parts) || !Array.isArray(doc?.wires)) return 'It needs a list of parts and a list of wires.';
+  const ids = new Set();
+  for (const part of doc.parts) {
+    if (typeof part?.id !== 'string' || !/^[\w-]+$/.test(part.id)) return `A part has an invalid id: ${JSON.stringify(part?.id)}.`;
+    if (ids.has(part.id)) return `Two parts have the id ${part.id}.`;
+    ids.add(part.id);
+    if (!Object.hasOwn(CATALOG, part.type)) return `Part ${part.id} has an unknown type: ${part.type}.`;
+    if (!Number.isFinite(part.x) || !Number.isFinite(part.y)) return `Part ${part.id} has no position.`;
+  }
+  if (doc.parts.filter((part) => part.type === BOARD_TYPE).length !== 1) return 'It needs exactly one board.';
+  if (doc.wires.some((wire) => !wire?.from?.part || !wire?.to?.part)) return 'A wire is missing one of its ends.';
+  return null;
+}
+
 export function emptyCircuit() {
   return {
     version: 1,

@@ -19,9 +19,9 @@ addToLibrary({
   sim_i2c_probe: (address) => Module.sim.i2cProbe(address),
   sim_i2c_write: (address, ptr, len) => Module.sim.i2cWrite(address, HEAPU8.slice(ptr, ptr + len)),
   sim_i2c_read: (address, ptr, len) => Module.sim.i2cRead(address, HEAPU8.subarray(ptr, ptr + len)),
-  sim_spi_transfer: (clock, out, input, len, writeValue) => {
+  sim_spi_transfer: (clock, mosi, out, input, len, writeValue) => {
     const data = out ? HEAPU8.slice(out, out + len) : new Uint8Array(len).fill(writeValue);
-    const result = Module.sim.spiTransfer(clock, data);
+    const result = Module.sim.spiTransfer(clock, data, mosi);
     if (input) HEAPU8.set(result.subarray(0, len), input);
   },
   sim_parallel_write: (data0, ptr, len) => Module.sim.parallelWrite(data0, HEAPU8.slice(ptr, ptr + len)),

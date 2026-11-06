@@ -240,3 +240,22 @@ test('every example runs without an error', async () => {
     assert.doesNotMatch(board.output, /Traceback/, `${name}: ${board.output}`);
   }
 });
+
+test('a print loop reaches the host in paced batches', async () => {
+  const board = new Board({ files: { '/code.py': 'while True:\n    print("hello")\n' } });
+  let messages = 0;
+  board.on('serial', () => { messages++; });
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+  await board.stop();
+  assert.ok(board.output.includes('hello'));
+  assert.ok(messages < 200, `${messages} messages in 2 seconds`);
+});
+
+test('nothing printed is lost or garbled by batching', async () => {
+  const code = 'for i in range(400):\n    print("é" * 100)\nprint("ALL SENT")\n';
+  const board = new Board({ files: { '/code.py': code } });
+  const output = await board.waitForOutput('ALL SENT');
+  await board.stop();
+  assert.equal(output.split('é'.repeat(100)).length - 1, 400);
+  assert.ok(!output.includes('\ufffd'));
+});

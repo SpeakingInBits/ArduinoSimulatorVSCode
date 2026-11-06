@@ -8,6 +8,10 @@ import { CTRL, controlsView, ctrlView, rxView } from './shared-state.js';
 
 // A real Metro has no clock battery, so it powers up in the year 2000.
 const POWER_ON_SECONDS = 946684800;
+// print() can run far faster than the panel can draw, so output leaves in batches. A program that
+// fills a batch waits for the next one, the way it would on a busy USB link.
+const SERIAL_BATCH_BYTES = 16 * 1024;
+const SERIAL_BATCH_MS = 33;
 
 const { shared, files, firmware, portHeapBytes, circuit: circuitDoc } = workerData;
 const ctrl = ctrlView(shared);
@@ -27,9 +31,33 @@ if (workerData.nvm) nvm.set(workerData.nvm);
 let clockOffsetMs = POWER_ON_SECONDS * 1000 - Date.now();
 const uartQueues = new Map();
 const usbIn = { cdc: [], midi: [] };
+const serialBatch = new Uint8Array(SERIAL_BATCH_BYTES);
+let serialLength = 0;
+let lastSerialFlush = -Infinity;
+
+const msUntilSerialFlush = () => SERIAL_BATCH_MS - (circuit.now() - lastSerialFlush);
+
+function flushSerial() {
+  if (serialLength > 0) post({ type: 'serial', data: serialBatch.slice(0, serialLength) });
+  serialLength = 0;
+  lastSerialFlush = circuit.now();
+}
+
+function serialWrite(data) {
+  let offset = 0;
+  while (offset < data.length) {
+    while (serialLength === SERIAL_BATCH_BYTES) waitMs(Math.max(1, msUntilSerialFlush()));
+    const count = Math.min(data.length - offset, SERIAL_BATCH_BYTES - serialLength);
+    serialBatch.set(data.subarray(offset, offset + count), serialLength);
+    serialLength += count;
+    offset += count;
+  }
+  if (msUntilSerialFlush() <= 0) flushSerial();
+}
 
 // Checks for controls the student moved, and runs anything due.
 function service() {
+  if (serialLength > 0 && msUntilSerialFlush() <= 0) flushSerial();
   if (Atomics.exchange(ctrl, CTRL.CONTROLS_CHANGED, 0) === 1) {
     for (let i = 0; i < slots.length; i++) {
       const value = controls[i];
@@ -132,7 +160,7 @@ const sim = {
   files,
   portHeapBytes,
 
-  serialWrite: (data) => post({ type: 'serial', data }),
+  serialWrite,
   serialAvailable: rxCount,
   serialPeek() {
     service();
@@ -148,6 +176,7 @@ const sim = {
 
   waitMs,
   reset(toBootloader) {
+    flushSerial();
     post({ type: 'reset', toBootloader: !!toBootloader });
     Atomics.wait(ctrl, CTRL.PARKED, 0);
   },
@@ -177,7 +206,7 @@ const sim = {
     device.model.i2c.read(device.context, buffer);
     return 0;
   },
-  spiTransfer: (clock, data) => circuit.spiTransfer(clock, data),
+  spiTransfer: (clock, data, mosi) => circuit.spiTransfer(clock, data, mosi),
 
   uartWrite(tx, data) {
     post({ type: 'uart', data });
@@ -298,4 +327,7 @@ createCircuitPython({
   sim,
   print: (text) => post({ type: 'log', text }),
   printErr: (text) => post({ type: 'log', text }),
-}).catch((error) => post({ type: 'crash', message: String(error?.stack ?? error) }));
+}).catch((error) => {
+  flushSerial();
+  post({ type: 'crash', message: String(error?.stack ?? error) });
+});

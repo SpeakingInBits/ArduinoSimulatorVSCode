@@ -283,7 +283,16 @@ export class Circuit {
       this.neighbors.get(a).push({ to: b, element: e });
       this.neighbors.get(b).push({ to: a, element: e });
     };
-    for (const e of this.elements) if (e.a !== undefined) connect(e.a, e.b, e);
+    for (const e of this.elements) {
+      if (e.a !== undefined) {
+        connect(e.a, e.b, e);
+      } else if (e.kind === 'npn') {
+        connect(e.collector, e.emitter, e);
+        connect(e.base, e.emitter, e);
+      } else if (e.kind === 'nmos') {
+        connect(e.drain, e.source, e);
+      }
+    }
 
     const groupOfRoot = new Map();
     const localOf = new Map();
@@ -345,7 +354,7 @@ export class Circuit {
     const group = element.group;
     if (!group) return;
     group.dirty = true;
-    if (group.watchers.length > 0) this.settle(group);
+    if (group.watchers.length > 0 && !this.sampling) this.settle(group);
   }
 
   // Solves a group and tells watchers about edges. Those can drive other groups, for example
@@ -384,7 +393,7 @@ export class Circuit {
     if (node <= 0) return node === 0 ? 0 : this.rails[-node - 1];
     const group = this.groupOfNode.get(node);
     if (group.dirty) {
-      this.settle(group);
+      if (!this.sampling) this.settle(group);
       // During another group's settle this only queues, so solve now for a fresh reading.
       if (group.dirty) group.solver.solve();
     }
@@ -492,19 +501,22 @@ export class Circuit {
       if (reply === 0) held = 0;
     });
     if (held === 0) return 0;
+    // Read first: solving is what brings the diode and transistor states up to date.
+    const level = this.volts(pin.node) > LOGIC_THRESHOLD ? 1 : 0;
     if (this.isFloating(pin.node)) {
       this.problem('warning', this.boardId, `${pin.name} is floating, so it reads randomly. Add a pull-up or pull-down.`);
       return this.random() < 0.5 ? 1 : 0;
     }
-    return this.volts(pin.node) > LOGIC_THRESHOLD ? 1 : 0;
+    return level;
   }
 
   adcRead(number) {
     this.tick();
     const pin = this.pin(number);
     if (!pin) return 0;
+    const volts = this.volts(pin.node);
     if (this.isFloating(pin.node)) return Math.floor(this.random() * 4096);
-    return Math.max(0, Math.min(4095, Math.round((this.volts(pin.node) / VCC) * 4095)));
+    return Math.max(0, Math.min(4095, Math.round((volts / VCC) * 4095)));
   }
 
   dacWrite(number, value) {
@@ -547,6 +559,8 @@ export class Circuit {
       case 'switch': return element.closed;
       case 'source': return !element.off;
       case 'diode': return element.on;
+      case 'npn': return element.state !== 'off';
+      case 'nmos': return element.on;
       default: return false;
     }
   }
@@ -600,9 +614,17 @@ export class Circuit {
 
   // --- Publishing ---
 
+  // Lets parts whose outputs track their inputs catch up, so measurements see the result. Solves
+  // directly because while sampling these are trial levels that watchers must not react to.
+  followInputs() {
+    for (const part of this.parts.values()) part.model.follow?.(part.context);
+    for (const group of this.groups) if (group.dirty) group.solver.solve();
+  }
+
   // Solves with every fast-toggling pin high, then low, so parts can show a time-weighted average.
   sampleToggling(toggling) {
     const sample = (phase) => {
+      this.followInputs();
       for (const part of this.parts.values()) part.model.sample?.(part.context, phase);
     };
     const set = (volts) => {
@@ -612,11 +634,15 @@ export class Circuit {
         if (pin.driver.group) pin.driver.group.solver.solve();
       }
     };
+    this.sampling = true;
     set(VCC);
     sample('high');
     set(0);
     sample('low');
     for (const pin of toggling) this.applyPin(pin);
+    // Back to the real pin levels before any watcher can see a trial level.
+    this.followInputs();
+    this.sampling = false;
   }
 
   measureDuty(now) {
@@ -661,10 +687,9 @@ export class Circuit {
     if (toggling.length > 0) {
       this.sampleToggling(toggling);
       this.settleAll();
-      // Parts that follow their inputs must end up matching the real pin levels again.
-      for (const part of this.parts.values()) part.model.sample?.(part.context, 'settled');
-      this.settleAll();
     } else {
+      this.followInputs();
+      this.settleAll();
       for (const part of this.parts.values()) {
         part.model.sample?.(part.context, 'high');
         part.model.sample?.(part.context, 'low');
@@ -732,16 +757,27 @@ export class Circuit {
     return high;
   }
 
-  spiTransfer(clockNumber, data) {
+  // Clocks bytes into every device on the bus. A data pin gets what MOSI sends, or what the device
+  // before it in a chain shifts out. Anything else just sees the level already on the pin. No
+  // part drives MISO yet, so reads get the idle high level.
+  spiTransfer(clockNumber, data, mosiNumber) {
     const clock = this.pin(clockNumber);
     const reply = new Uint8Array(data.length).fill(0xff);
     if (!clock) return reply;
-    for (const entry of this.parts.values()) {
-      const spi = entry.model.spi;
-      if (!spi) continue;
-      if (this.nodeOf(entry.part.id, spi.clockPin) !== clock.node) continue;
-      const answer = spi.transfer(entry.context, data);
-      if (answer) reply.set(answer.subarray(0, data.length));
+    const dataNode = ({ part, model }) => this.nodeOf(part.id, model.spi.dataPin);
+    const waiting = [...this.parts.values()].filter(({ part, model }) => (
+      model.spi && this.nodeOf(part.id, model.spi.clockPin) === clock.node));
+    const feeds = new Map();
+    const mosi = this.pin(mosiNumber);
+    if (mosi) feeds.set(mosi.node, data);
+    while (waiting.length > 0) {
+      const fed = waiting.findIndex((entry) => feeds.has(dataNode(entry)));
+      const [entry] = waiting.splice(Math.max(0, fed), 1);
+      const { spi } = entry.model;
+      const input = feeds.get(dataNode(entry))
+        ?? new Uint8Array(data.length).fill(entry.context.level(spi.dataPin) ? 0xff : 0);
+      const shiftedOut = spi.transfer(entry.context, input);
+      if (spi.outPin) feeds.set(this.nodeOf(entry.part.id, spi.outPin), shiftedOut);
     }
     return reply;
   }

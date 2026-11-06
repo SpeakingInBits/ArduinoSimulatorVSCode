@@ -49,10 +49,38 @@ function readProjectFiles(folder, activeDocument) {
   return files;
 }
 
+const sameFolder = (a, b) => path.relative(a, b) === '';
+
+function isInside(folder, file) {
+  const relative = path.relative(folder, file);
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+// The project is the nearest folder holding a circuit or a program, so a file in lib/ or .vscode/
+// still belongs to the project around it.
 function projectFolder() {
   const document = vscode.window.activeTextEditor?.document;
-  if (document?.uri.scheme === 'file') return path.dirname(document.uri.fsPath);
-  return session?.folder ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const current = session?.folder ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (document?.uri.scheme !== 'file') return current;
+  const start = path.dirname(document.uri.fsPath);
+  const workspace = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath;
+  if (workspace) {
+    for (let folder = start; ; folder = path.dirname(folder)) {
+      if (fs.existsSync(path.join(folder, CIRCUIT_FILE)) || fs.existsSync(path.join(folder, 'code.py'))) return folder;
+      if (sameFolder(folder, workspace)) break;
+    }
+  }
+  return document.languageId === 'python' ? start : current;
+}
+
+// Everything the board will read from disk has to include what the student just typed.
+async function saveProjectFiles(folder) {
+  for (const document of vscode.workspace.textDocuments) {
+    const { fsPath } = document.uri;
+    if (document.isDirty && document.uri.scheme === 'file' && isInside(folder, fsPath) && path.basename(fsPath) !== CIRCUIT_FILE) {
+      await document.save();
+    }
+  }
 }
 
 class Session {
@@ -64,6 +92,9 @@ class Session {
     this.board = undefined;
     this.document = undefined;
     this.nvm = undefined;
+    this.circuitError = undefined;
+    this.pendingSave = undefined;
+    this.queue = Promise.resolve();
     this.pendingTests = new Map();
     this.nextTest = 1;
   }
@@ -76,20 +107,72 @@ class Session {
     return path.join(this.folder, CIRCUIT_FILE);
   }
 
-  readCircuit() {
+  // A project may not have a circuit yet. One that exists but cannot be used sets circuitError,
+  // and is then left alone so the student can repair it.
+  async readCircuit() {
+    this.circuitError = undefined;
     try {
-      return JSON.parse(fs.readFileSync(this.circuitPath(), 'utf8'));
-    } catch {
+      const circuit = JSON.parse(fs.readFileSync(this.circuitPath(), 'utf8'));
+      const { circuitProblem } = await import('./shared/catalog.js');
+      this.circuitError = circuitProblem(circuit) ?? undefined;
+      return this.circuitError ? undefined : circuit;
+    } catch (error) {
+      if (error.code !== 'ENOENT') this.circuitError = error.message;
       return undefined;
     }
   }
 
+  showCircuitError() {
+    const action = `Open ${CIRCUIT_FILE}`;
+    vscode.window.showErrorMessage(`${CIRCUIT_FILE} needs fixing before it can be used: ${this.circuitError}`, action).then((answer) => {
+      if (answer === action) vscode.window.showTextDocument(vscode.Uri.file(this.circuitPath()));
+    });
+  }
+
+  async loadCircuit() {
+    this.circuit = await this.readCircuit();
+    this.post({ type: 'load', circuit: this.circuit, error: this.circuitError });
+    if (this.circuitError) this.showCircuitError();
+  }
+
   saveCircuit(circuit) {
+    if (this.circuitError) return;
     this.circuit = circuit;
     clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => {
-      if (this.folder) fs.writeFileSync(this.circuitPath(), `${JSON.stringify(circuit, null, 2)}\n`);
-    }, SAVE_DELAY_MS);
+    // The file is chosen now, because the project can change before the timer fires.
+    this.pendingSave = { file: this.circuitPath(), circuit };
+    this.saveTimer = setTimeout(() => this.flushSave(), SAVE_DELAY_MS);
+  }
+
+  flushSave() {
+    clearTimeout(this.saveTimer);
+    const pending = this.pendingSave;
+    this.pendingSave = undefined;
+    if (!pending) return;
+    try {
+      fs.writeFileSync(pending.file, `${JSON.stringify(pending.circuit, null, 2)}\n`);
+    } catch (error) {
+      vscode.window.showErrorMessage(`Could not save the circuit: ${error.message}`);
+    }
+  }
+
+  // Remembers the program, because no text editor is active while the panel has focus.
+  noteEditor(editor) {
+    const document = editor?.document;
+    if (document?.languageId === 'python' && document.uri.scheme === 'file') this.document = document;
+  }
+
+  // The open Python file runs as code.py, if it sits at the top of this project.
+  programDocument() {
+    const { document } = this;
+    if (!document || document.isClosed) return undefined;
+    return sameFolder(this.folder, path.dirname(document.uri.fsPath)) ? document : undefined;
+  }
+
+  async onDocumentSaved(document) {
+    if (!this.panel || !this.folder || !sameFolder(document.uri.fsPath, this.circuitPath())) return;
+    await this.stop();
+    await this.loadCircuit();
   }
 
   html(webview) {
@@ -106,6 +189,12 @@ class Session {
       vscode.window.showWarningMessage('Open a project folder first, or create one with "New Project from Example".');
       return false;
     }
+    if (this.panel && this.folder === folder && !this.circuitError) {
+      this.panel.reveal(undefined, true);
+      await this.ready;
+      return true;
+    }
+    this.flushSave();
     if (this.panel && this.folder !== folder) await this.stop();
     this.folder = folder;
     if (this.panel) {
@@ -122,14 +211,14 @@ class Session {
       this.ready = new Promise((resolve) => { this.markReady = resolve; });
       this.panel.webview.onDidReceiveMessage((message) => this.onMessage(message));
       this.panel.onDidDispose(() => {
+        this.flushSave();
         this.stop();
         this.panel = undefined;
       });
       this.panel.webview.html = this.html(this.panel.webview);
       await this.ready;
     }
-    this.circuit = this.readCircuit();
-    this.post({ type: 'load', circuit: this.circuit });
+    await this.loadCircuit();
     return true;
   }
 
@@ -149,25 +238,45 @@ class Session {
     }
   }
 
-  async stop() {
-    const { board } = this;
-    this.board = undefined;
-    await board?.stop();
-    this.post({ type: 'running', running: false });
+  // Starting and stopping take turns. Otherwise a double click could start a second board that
+  // nothing holds on to, and so nothing could stop.
+  enqueue(task) {
+    this.queue = this.queue.then(task).catch((error) => {
+      vscode.window.showErrorMessage(`Simulator error: ${error?.message ?? error}`);
+    });
+    return this.queue;
   }
 
-  async run() {
-    const editor = vscode.window.activeTextEditor;
-    if (editor?.document.languageId === 'python') this.document = editor.document;
-    const document = this.document;
-    if (document?.isDirty) await document.save();
-    if (!this.folder) {
-      vscode.window.showWarningMessage('Open a project folder first.');
+  stop() {
+    return this.enqueue(async () => {
+      await this.releaseBoard();
+      this.post({ type: 'running', running: false });
+    });
+  }
+
+  run() {
+    return this.enqueue(() => this.startBoard());
+  }
+
+  async releaseBoard() {
+    const { board } = this;
+    this.board = undefined;
+    // Messages still on their way from the old board must not reach the new run.
+    board?.removeAllListeners();
+    await board?.stop();
+  }
+
+  async startBoard() {
+    if (!this.panel) return;
+    if (this.circuitError) {
+      this.showCircuitError();
       return;
     }
+    this.noteEditor(vscode.window.activeTextEditor);
+    await saveProjectFiles(this.folder);
     let files;
     try {
-      files = readProjectFiles(this.folder, document);
+      files = readProjectFiles(this.folder, this.programDocument());
     } catch (error) {
       vscode.window.showErrorMessage(error.message);
       return;
@@ -178,9 +287,7 @@ class Session {
     }
     const { Board } = await import('./sim/board-host.js');
     const { emptyCircuit } = await import('./shared/catalog.js');
-    const previous = this.board;
-    this.board = undefined;
-    await previous?.stop();
+    await this.releaseBoard();
     this.post({ type: 'clearConsole' });
     const board = new Board({
       files,
@@ -272,12 +379,19 @@ function setupEditor(context) {
   const settingsPath = path.join(folder, '.vscode', 'settings.json');
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
   let settings = {};
-  try {
-    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-  } catch {
-    // No usable settings file yet.
+  if (fs.existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    } catch {
+      // Settings files can hold comments, which rewriting this one would lose.
+      const action = 'Open settings.json';
+      vscode.window.showWarningMessage('Autocomplete is nearly set up. This settings.json has comments or errors, so it was left alone. Add "python.analysis.extraPaths": ["lib"] to it yourself.', action).then((answer) => {
+        if (answer === action) vscode.window.showTextDocument(vscode.Uri.file(settingsPath));
+      });
+      return;
+    }
   }
-  settings['python.analysis.extraPaths'] = ['lib'];
+  settings['python.analysis.extraPaths'] = [...new Set([].concat(settings['python.analysis.extraPaths'] ?? [], 'lib'))];
   settings['python.analysis.diagnosticSeverityOverrides'] = {
     ...settings['python.analysis.diagnosticSeverityOverrides'], reportMissingModuleSource: 'none',
   };
@@ -318,6 +432,7 @@ async function copyToBoard() {
 
 function activate(context) {
   session = new Session(context);
+  session.noteEditor(vscode.window.activeTextEditor);
   const command = (id, handler) => context.subscriptions.push(vscode.commands.registerCommand(id, handler));
   command('metroSim.open', () => session.open(projectFolder()));
   command('metroSim.run', async () => {
@@ -328,7 +443,16 @@ function activate(context) {
   command('metroSim.addLibrary', () => addLibrary(context));
   command('metroSim.setupEditor', () => setupEditor(context));
   command('metroSim.copyToBoard', copyToBoard);
-  context.subscriptions.push({ dispose: () => session.stop() });
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => session.noteEditor(editor)),
+    vscode.workspace.onDidSaveTextDocument((document) => session.onDocumentSaved(document)),
+    {
+      dispose() {
+        session.flushSave();
+        session.stop();
+      },
+    },
+  );
   return { session };
 }
 
