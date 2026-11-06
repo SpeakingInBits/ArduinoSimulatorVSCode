@@ -2,6 +2,7 @@
 import { BOARD_TYPE, CATALOG, CATEGORIES, defaultProps, definition, emptyCircuit, pinPosition } from '../shared/catalog.js';
 import { buildNets, pinKey } from '../shared/nets.js';
 import { holePattern, partArt } from './art.js';
+import { SerialFilter, typeInto } from './serial-text.js';
 
 const vscode = acquireVsCodeApi();
 const GRID = 10;
@@ -33,9 +34,11 @@ const state = {
   colorIndex: 0,
   controlValues: {},
   loadError: undefined, // Why circuit.json could not be used. Nothing can be edited until it is fixed.
+  scene3d: null, // The 3D view, while it is open.
 };
 
 const partById = (id) => state.doc.parts.find((part) => part.id === id);
+const viewOf = (part) => (part.type === BOARD_TYPE ? { board: state.board } : state.views[part.id]);
 const locked = () => state.running || !!state.loadError;
 const snap = (value) => Math.round(value / GRID) * GRID;
 
@@ -136,7 +139,7 @@ function pinEnd(end) {
 function partGroup(part) {
   const entry = definition(part.type);
   const interactive = (entry.controls ?? []).some((control) => ['momentary', 'toggle'].includes(control.kind));
-  const view = part.type === BOARD_TYPE ? { board: state.board } : state.views[part.id];
+  const view = viewOf(part);
   return `<g class="part${interactive ? ' interactive' : ''}" data-part="${part.id}" transform="translate(${part.x} ${part.y}) rotate(${part.rotation ?? 0})">${partArt(part, view)}</g>`;
 }
 
@@ -191,14 +194,46 @@ function render() {
   renderOverlay();
   renderInspector();
   updateToolbar();
+  state.scene3d?.sync(state.doc, viewOf);
 }
 
 function updatePart(id) {
   const part = partById(id);
   const element = canvas.querySelector(`[data-part="${id}"]`);
   if (!part || !element) return;
-  const view = part.type === BOARD_TYPE ? { board: state.board } : state.views[id];
+  const view = viewOf(part);
   element.innerHTML = partArt(part, view);
+  state.scene3d?.updatePart(part, view);
+}
+
+// --- 3D view ---
+
+// three.js loads the first time this is opened, and closing the view frees its memory.
+async function toggle3d() {
+  const button = $('view3d');
+  const stage = $('stage3d');
+  if (state.scene3d) {
+    state.scene3d.dispose();
+    state.scene3d = null;
+    stage.hidden = true;
+    button.textContent = '3D view';
+    return;
+  }
+  button.disabled = true;
+  stage.hidden = false;
+  try {
+    const { createScene3d } = await import('./scene3d.js');
+    state.scene3d = createScene3d(stage);
+    state.scene3d.sync(state.doc, viewOf);
+    state.scene3d.fit();
+    button.textContent = '2D view';
+    button.disabled = false;
+  } catch (error) {
+    // The 2D view does everything, so a computer without WebGL just keeps using it.
+    console.error(error);
+    stage.hidden = true;
+    button.title = '3D view is not available on this computer.';
+  }
 }
 
 function updateToolbar() {
@@ -649,27 +684,12 @@ $('controls').addEventListener('click', (event) => {
 // --- Serial console ---
 
 const consoleElement = $('console');
-let partialSerial = '';
-
-// The end of an escape sequence that has not finished arriving. The length limit stops a stray
-// escape character from holding back everything printed after it.
-const UNFINISHED_ESCAPE = /\x1b(?:\][^\x1b]{0,200}\x1b?|\[[0-9;]{0,20})?$/;
+const serialFilter = new SerialFilter();
 
 function appendSerial(chunk) {
-  // An escape sequence can arrive split across batches, so hold back an unfinished one.
-  let text = partialSerial + chunk;
-  const unfinished = text.match(UNFINISHED_ESCAPE);
-  partialSerial = unfinished ? unfinished[0] : '';
-  if (unfinished) text = text.slice(0, unfinished.index);
-  const title = [...text.matchAll(/\x1b\]0;(.*?)\x1b\\/g)].at(-1);
-  if (title) $('board-title').textContent = title[1];
-  const clean = text.replace(/\x1b\].*?\x1b\\/g, '').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\r/g, '');
-  let content = consoleElement.textContent;
-  for (const character of clean) {
-    if (character === '\b') content = content.slice(0, -1);
-    else content += character;
-  }
-  consoleElement.textContent = content.slice(-60000);
+  const { text, title } = serialFilter.push(chunk);
+  if (title !== undefined) $('board-title').textContent = title;
+  consoleElement.textContent = typeInto(consoleElement.textContent, text).slice(-60000);
   consoleElement.scrollTop = consoleElement.scrollHeight;
 }
 
@@ -821,11 +841,12 @@ const handlers = {
     state.selection = null;
     render();
     fit();
+    state.scene3d?.fit();
   },
   serial: (message) => appendSerial(message.text),
   clearConsole() {
     consoleElement.textContent = '';
-    partialSerial = '';
+    serialFilter.reset();
   },
   frame: applyFrame,
   running: (message) => setRunning(message.running),
@@ -860,7 +881,8 @@ $('undo').addEventListener('click', () => restore(state.undo, state.redo));
 $('redo').addEventListener('click', () => restore(state.redo, state.undo));
 $('rotate').addEventListener('click', rotateSelection);
 $('delete').addEventListener('click', deleteSelection);
-$('fit').addEventListener('click', fit);
+$('fit').addEventListener('click', () => (state.scene3d ? state.scene3d.fit() : fit()));
+$('view3d').addEventListener('click', toggle3d);
 $('search').addEventListener('input', (event) => renderPalette(event.target.value));
 $('parts').addEventListener('click', (event) => {
   const type = event.target.dataset?.add;

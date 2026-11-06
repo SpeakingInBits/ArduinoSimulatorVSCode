@@ -13,6 +13,8 @@
   "main": "./extension.cjs",
   "scripts": {
     "test": "node --test test/*.test.js",
+    "test:unit": "node --test test/circuit.test.js test/console.test.js",
+    "test:e2e": "node scripts/run-e2e.js",
     "assets": "node scripts/copy-assets.js"
   },
   "activationEvents": ["workspaceContains:**/circuit.json"],

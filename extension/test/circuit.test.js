@@ -1,5 +1,6 @@
 // Tests the electrical model without running any firmware.
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { test } from 'node:test';
 import { BOARD_PINS, CATALOG, circuitProblem, defaultProps, emptyCircuit, pinPosition } from '../shared/catalog.js';
 import { buildNets, pinKey } from '../shared/nets.js';
@@ -299,13 +300,18 @@ test('sampling a toggling pin does not trip parts watching a driven output', () 
     ['board:D9', 'd:EN1'], ['board:D8', 'd:IN1'], ['board:3V', 'd:VCC'], ['board:GND1', 'd:GND1'],
     ['b:+', 'd:VS'], ['b:-', 'board:GND1'], ['d:OUT1', 'r:IN'], ['board:3V', 'r:VCC'], ['board:GND1', 'r:GND'],
   ]);
-  sim.output('D8', 1);
+  // The enable pin sits high, so OUT1 holds the relay input low. While sampling it floats for a
+  // moment, and the relay's pull-up would look like a real edge.
+  sim.output('D8', 0);
   sim.circuit.pinMode(BOARD_PINS.D9, PIN_MODE.PWM, 0, false);
   sim.circuit.pwmSet(BOARD_PINS.D9, 1000, 32768);
   sim.advance(40);
-  const relay = sim.circuit.parts.get('r').context;
-  assert.equal(sim.view('r').energized, false);
-  assert.equal(relay.no.closed, false);
+  let edges = 0;
+  sim.circuit.watch(sim.circuit.nodeOf('d', 'OUT1'), () => { edges++; });
+  sim.advance(40);
+  sim.advance(40);
+  assert.equal(edges, 0);
+  assert.equal(sim.circuit.parts.get('r').context.no.closed, true);
 });
 
 test('a pin held by a conducting transistor is not floating', () => {
@@ -348,6 +354,14 @@ test('SPI bytes move along a chain of shift registers', () => {
   sim.circuit.pinWrite(BOARD_PINS.D5, 1);
   assert.equal(sim.circuit.parts.get('first').context.latched, 0x55);
   assert.equal(sim.circuit.parts.get('second').context.latched, 0xaa);
+});
+
+test('every shipped example is a usable circuit', () => {
+  const examples = new URL('../examples/', import.meta.url);
+  for (const name of fs.readdirSync(examples)) {
+    const file = new URL(`${name}/circuit.json`, examples);
+    if (fs.existsSync(file)) assert.equal(circuitProblem(JSON.parse(fs.readFileSync(file, 'utf8'))), null, name);
+  }
 });
 
 test('a saved circuit that cannot be used is explained', () => {

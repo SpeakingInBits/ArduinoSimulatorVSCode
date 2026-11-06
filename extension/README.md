@@ -52,3 +52,11 @@ L293D, and batteries.
 - Memory limits are an estimate, so a program near the limit may behave differently.
 - Parts are simplified. Capacitors do nothing at DC, and the display contrast pin is ignored.
 - USB keyboard, mouse and MIDI output is accepted, but nothing shows it yet.
+
+## 3D view
+
+The 3D view button shows the circuit in 3D. It only shows the circuit, so students still build in the 2D canvas. Close it to free its memory.
+
+Parts need no 3D model: each one gets a body from the largest shape in its 2D art, with that art on top. To model a part by hand, add it to `BUILDERS` in `webview/scene3d.js`.
+
+three.js 0.186.1 is kept in `webview/vendor/three`, copied from the npm package's `build` folder with its licence. It loads the first time the view opens.

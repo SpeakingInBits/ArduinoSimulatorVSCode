@@ -22,8 +22,10 @@ while True:
 `;
 
 const TICKING_CODE = `import time
+count = 0
 while True:
-    print("TICK")
+    count += 1
+    print("TICK", count)
     time.sleep(0.03)
 `;
 
@@ -34,6 +36,15 @@ const pinOf = (doc, id, pin, catalog) => {
   const definition = catalog.definition(part.type).pins.find((p) => p.id === pin);
   return catalog.pinPosition(part, definition);
 };
+
+async function waitFor3d(step, ready) {
+  for (let i = 0; i < 100; i++) {
+    const { view3d } = await step({ action: 'read' });
+    if (view3d?.frames > 0 && view3d.artDrawn > 0 && ready(view3d)) return view3d;
+    await sleep(100);
+  }
+  throw new Error('The 3D view never drew what was expected');
+}
 
 async function run() {
   const folder = process.env.SIM_TEST_FOLDER;
@@ -110,6 +121,17 @@ async function run() {
     await step({ action: 'slider', key: `${pot}:position`, value: 0.25 });
     report.steps.sliderToConsoleMs = (await step({ action: 'waitConsole', text: 'POT 10' })).ms;
 
+    // The 3D view opens during a run, inside the webview's security policy, and follows the
+    // simulation: turning the potentiometer redraws its art.
+    await step({ action: 'click', selector: '#view3d' });
+    const view3d = await waitFor3d(step, () => true);
+    report.steps.view3d = view3d;
+    if (view3d.artFailed > 0 || view3d.parts !== doc.parts.length || view3d.wires !== 8) throw new Error(`3D view is wrong: ${JSON.stringify(view3d)}`);
+    await step({ action: 'slider', key: `${pot}:position`, value: 0.75 });
+    report.steps.view3dFollowsRun = (await waitFor3d(step, (now) => now.artDrawn > view3d.artDrawn)).artDrawn;
+    await step({ action: 'click', selector: '#view3d' });
+    if ((await step({ action: 'read' })).view3d !== null) throw new Error('3D view did not close');
+
     // Stop, and the page returns to editing.
     await step({ action: 'click', selector: '#stop' });
     await step({ action: 'waitRunning', running: false });
@@ -150,6 +172,20 @@ async function run() {
     await step({ action: 'waitConsole', text: 'UNSAVED EDIT' });
     if (program.document.isDirty) throw new Error('Run did not save the program');
 
+    // Another Python file at the top of the project runs as the program, from the panel too.
+    const blinkFile = path.join(folder, 'blink.py');
+    fs.writeFileSync(blinkFile, 'print("BLINK PROGRAM")\n');
+    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(blinkFile), vscode.ViewColumn.One);
+    await vscode.commands.executeCommand('workbench.action.focusNextGroup');
+    await sleep(500);
+    await step({ action: 'click', selector: '#run' });
+    await step({ action: 'waitConsole', text: 'BLINK PROGRAM' });
+    await vscode.window.showTextDocument(program.document, vscode.ViewColumn.One);
+    await vscode.commands.executeCommand('workbench.action.focusNextGroup');
+    await sleep(500);
+    await step({ action: 'click', selector: '#run' });
+    await sleep(300);
+
     // Restart returns the controls to their defaults, on the page as well as on the board.
     await step({ action: 'slider', key: `${pot}:position`, value: 0.25 });
     await step({ action: 'click', selector: '#run' });
@@ -161,10 +197,12 @@ async function run() {
       throw new Error('Restart left old control values on the page');
     }
 
-    // A double click on Run leaves one board, and Stop stops it.
+    // Two runs at once, as from a double click, leave one board, and Stop stops it. They are
+    // started directly because clicks in the page do not reliably overlap.
     const reopened = await vscode.window.showTextDocument(program.document, vscode.ViewColumn.One);
     await reopened.edit((edit) => edit.replace(new vscode.Range(0, 0, reopened.document.lineCount, 0), TICKING_CODE));
-    await Promise.all([step({ action: 'click', selector: '#run' }), step({ action: 'click', selector: '#run' })]);
+    await reopened.document.save();
+    await Promise.all([session.run(), session.run()]);
     await sleep(600);
     await step({ action: 'waitConsole', text: 'TICK' });
     await step({ action: 'click', selector: '#stop' });
@@ -175,6 +213,11 @@ async function run() {
     report.steps.outputStoppedAfterStop = afterStop === (await step({ action: 'read' })).console;
     if (!report.steps.outputStoppedAfterStop) throw new Error('A board kept running after Stop');
 
+    // Stop still counts when it arrives while a run is starting.
+    await Promise.all([session.run(), session.stop()]);
+    report.steps.boardAfterStopDuringStart = session.board === undefined ? 'none' : 'running';
+    if (session.board) throw new Error('Stop was ignored while a run was starting');
+
     // A file in lib/ belongs to the project around it.
     fs.mkdirSync(path.join(folder, 'lib'), { recursive: true });
     fs.writeFileSync(path.join(folder, 'lib', 'helper.py'), 'VALUE = 1\n');
@@ -182,6 +225,17 @@ async function run() {
     await vscode.commands.executeCommand('metroSim.open');
     report.steps.folderFromLib = path.basename(session.folder);
     if (path.relative(session.folder, folder) !== '') throw new Error(`lib/ became the project: ${session.folder}`);
+
+    // Run saves every open file in the project, and a file in lib/ does not replace the program.
+    const helper = vscode.window.activeTextEditor;
+    await helper.edit((edit) => edit.replace(new vscode.Range(0, 0, 1, 0), 'VALUE = 2\n'));
+    const mainProgram = await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file), vscode.ViewColumn.One);
+    await mainProgram.edit((edit) => edit.replace(new vscode.Range(0, 0, mainProgram.document.lineCount, 0), 'import helper\nprint("HELPER", helper.VALUE)\n'));
+    await vscode.window.showTextDocument(helper.document, vscode.ViewColumn.One);
+    await step({ action: 'click', selector: '#run' });
+    await step({ action: 'waitConsole', text: 'HELPER 2' });
+    await step({ action: 'click', selector: '#stop' });
+    await step({ action: 'waitRunning', running: false });
 
     // A broken circuit.json is reported and left alone until it is fixed.
     const circuitFile = path.join(folder, 'circuit.json');
@@ -214,6 +268,22 @@ async function run() {
     const merged = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
     report.steps.mergedSettings = merged;
     if (merged['editor.tabSize'] !== 2 || merged['python.analysis.extraPaths'].join() !== 'other,lib') throw new Error('Setup lost existing settings');
+
+    // Switching projects sends a waiting save to the project it came from.
+    const other = path.join(path.dirname(folder), `${path.basename(folder)}-other`);
+    fs.mkdirSync(other, { recursive: true });
+    fs.writeFileSync(path.join(other, 'code.py'), 'print("OTHER PROJECT")\n');
+    session.saveCircuit({ ...(await step({ action: 'doc' })), marker: 'first project' });
+    await session.open(other);
+    await sleep(600);
+    if (fs.existsSync(path.join(other, 'circuit.json'))) throw new Error('A save landed in the wrong project');
+    if (JSON.parse(fs.readFileSync(circuitFile, 'utf8')).marker !== 'first project') throw new Error('A waiting save was lost');
+
+    // The panel runs the project it shows, not the program left open from another project.
+    await step({ action: 'click', selector: '#run' });
+    await step({ action: 'waitConsole', text: 'OTHER PROJECT' });
+    await step({ action: 'click', selector: '#stop' });
+    await step({ action: 'waitRunning', running: false });
     report.passed = true;
   } catch (error) {
     report.passed = false;
