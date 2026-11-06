@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "board",
+      "type": "metro-m0-express",
+      "x": 40,
+      "y": 40,
+      "rotation": 0,
+      "props": {}
+    }
+  ],
+  "wires": []
+}

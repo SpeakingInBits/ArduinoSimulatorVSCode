@@ -1,0 +1,55 @@
+<!doctype html>
+<!-- Developer preview of the builder outside VS Code. Serve the extension folder over HTTP and
+     open test/preview.html, or test/preview.html?parts to lay out every part for review. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Builder preview</title>
+<style>
+  :root {
+    --vscode-foreground: #ccc; --vscode-editor-background: #1e1e1e; --vscode-panel-border: #444;
+    --vscode-button-background: #0e639c; --vscode-button-foreground: #fff; --vscode-input-background: #3c3c3c;
+    --vscode-input-foreground: #ccc; --vscode-focusBorder: #39f; --vscode-font-family: sans-serif;
+    --vscode-editor-font-family: monospace; --vscode-descriptionForeground: #999;
+  }
+</style>
+</head>
+<body>
+<script type="module">
+  const page = await (await fetch('../webview/index.html')).text();
+  const body = page.match(/<body>([\s\S]*)<script/)[1];
+  document.body.innerHTML = body;
+  const css = document.createElement('link');
+  css.rel = 'stylesheet';
+  css.href = '../webview/style.css';
+  document.head.append(css);
+
+  const sent = [];
+  window.sentMessages = sent;
+  window.acquireVsCodeApi = () => ({ postMessage: (message) => sent.push(message) });
+  await import('../webview/main.js');
+
+  const { CATALOG, defaultProps, emptyCircuit } = await import('../shared/catalog.js');
+  const example = new URLSearchParams(location.search).get('example');
+  const circuit = example ? await (await fetch(`../examples/${example}/circuit.json`)).json() : emptyCircuit();
+  if (location.search.includes('parts')) {
+    let x = 380;
+    let y = 40;
+    let rowHeight = 0;
+    for (const [type, entry] of Object.entries(CATALOG)) {
+      if (entry.fixed) continue;
+      if (x + entry.w > 1180) {
+        x = 40;
+        y += rowHeight + 50;
+        rowHeight = 0;
+      }
+      circuit.parts.push({ id: type.replace(/[^a-z0-9]/g, ''), type, x, y: y + 20, rotation: 0, props: defaultProps(type) });
+      x += Math.round((entry.w + 40) / 10) * 10;
+      rowHeight = Math.max(rowHeight, entry.h);
+      if (y < 260 && x > 1100) { x = 380; }
+    }
+  }
+  window.postMessage({ type: 'load', circuit });
+</script>
+</body>
+</html>

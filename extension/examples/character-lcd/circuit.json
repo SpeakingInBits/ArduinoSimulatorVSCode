@@ -1,0 +1,166 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "board",
+      "type": "metro-m0-express",
+      "x": 40,
+      "y": 40,
+      "rotation": 0,
+      "props": {}
+    },
+    {
+      "id": "lcd1",
+      "type": "lcd1602",
+      "x": 110,
+      "y": 300,
+      "rotation": 0,
+      "props": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "wire1",
+      "from": {
+        "part": "lcd1",
+        "pin": "VSS"
+      },
+      "to": {
+        "part": "board",
+        "pin": "GND1"
+      },
+      "points": [],
+      "color": "#222"
+    },
+    {
+      "id": "wire2",
+      "from": {
+        "part": "lcd1",
+        "pin": "VDD"
+      },
+      "to": {
+        "part": "board",
+        "pin": "5V"
+      },
+      "points": [],
+      "color": "#d33"
+    },
+    {
+      "id": "wire3",
+      "from": {
+        "part": "lcd1",
+        "pin": "RW"
+      },
+      "to": {
+        "part": "board",
+        "pin": "GND2"
+      },
+      "points": [],
+      "color": "#222"
+    },
+    {
+      "id": "wire4",
+      "from": {
+        "part": "lcd1",
+        "pin": "LEDA"
+      },
+      "to": {
+        "part": "board",
+        "pin": "5V"
+      },
+      "points": [],
+      "color": "#d33"
+    },
+    {
+      "id": "wire5",
+      "from": {
+        "part": "lcd1",
+        "pin": "LEDK"
+      },
+      "to": {
+        "part": "board",
+        "pin": "GND2"
+      },
+      "points": [],
+      "color": "#222"
+    },
+    {
+      "id": "wire6",
+      "from": {
+        "part": "lcd1",
+        "pin": "RS"
+      },
+      "to": {
+        "part": "board",
+        "pin": "D7"
+      },
+      "points": [],
+      "color": "#2e9e4f"
+    },
+    {
+      "id": "wire7",
+      "from": {
+        "part": "lcd1",
+        "pin": "E"
+      },
+      "to": {
+        "part": "board",
+        "pin": "D8"
+      },
+      "points": [],
+      "color": "#2e9e4f"
+    },
+    {
+      "id": "wire8",
+      "from": {
+        "part": "lcd1",
+        "pin": "D4"
+      },
+      "to": {
+        "part": "board",
+        "pin": "D9"
+      },
+      "points": [],
+      "color": "#2e9e4f"
+    },
+    {
+      "id": "wire9",
+      "from": {
+        "part": "lcd1",
+        "pin": "D5"
+      },
+      "to": {
+        "part": "board",
+        "pin": "D10"
+      },
+      "points": [],
+      "color": "#2e9e4f"
+    },
+    {
+      "id": "wire10",
+      "from": {
+        "part": "lcd1",
+        "pin": "D6"
+      },
+      "to": {
+        "part": "board",
+        "pin": "D11"
+      },
+      "points": [],
+      "color": "#2e9e4f"
+    },
+    {
+      "id": "wire11",
+      "from": {
+        "part": "lcd1",
+        "pin": "D7"
+      },
+      "to": {
+        "part": "board",
+        "pin": "D12"
+      },
+      "points": [],
+      "color": "#2e9e4f"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "title": "Character LCD",
+  "description": "Show text on a 16x2 LCD in 4-bit mode.",
+  "libraries": [
+    "adafruit_character_lcd"
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "title": "LED and button on a breadboard",
+  "description": "Wire an LED with a resistor and read a push button.",
+  "libraries": []
+}

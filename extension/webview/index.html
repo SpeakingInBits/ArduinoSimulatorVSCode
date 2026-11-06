@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+  content="default-src 'none'; style-src {{cspSource}} 'unsafe-inline'; script-src {{cspSource}} 'nonce-{{nonce}}'; img-src {{cspSource}} data:; media-src {{cspSource}};">
+<link rel="stylesheet" href="{{webviewRoot}}/style.css">
+</head>
+<body>
+<header class="toolbar">
+  <button id="run" class="primary" title="Run the program (F5)">Run</button>
+  <button id="stop" disabled title="Stop the program">Stop</button>
+  <span class="divider"></span>
+  <button id="undo" title="Undo (Ctrl+Z)">Undo</button>
+  <button id="redo" title="Redo (Ctrl+Y)">Redo</button>
+  <button id="rotate" title="Rotate selection (R)">Rotate</button>
+  <button id="delete" title="Delete selection (Del)">Delete</button>
+  <span class="divider"></span>
+  <button id="fit" title="Fit the circuit in view">Fit</button>
+  <span id="status" class="status">Stopped</span>
+</header>
+<main class="layout">
+  <aside class="palette" aria-label="Parts">
+    <input id="search" type="search" placeholder="Search parts" aria-label="Search parts">
+    <div id="parts"></div>
+  </aside>
+  <section class="stage">
+    <svg id="canvas" tabindex="0" aria-label="Circuit canvas">
+      <defs id="defs"></defs>
+      <g id="world">
+        <g id="layer-background"></g>
+        <g id="layer-parts"></g>
+        <g id="layer-wires"></g>
+        <g id="layer-overlay"></g>
+      </g>
+    </svg>
+    <div id="tooltip" class="tooltip" hidden></div>
+  </section>
+  <aside class="inspector" aria-label="Details">
+    <div id="details"></div>
+    <div id="controls"></div>
+  </aside>
+  <section class="bottom">
+    <div class="tabs" role="tablist">
+      <button id="tab-console" class="tab active" role="tab">Serial console</button>
+      <button id="tab-problems" class="tab" role="tab">Problems <span id="problem-count"></span></button>
+      <span class="status" id="board-title"></span>
+    </div>
+    <pre id="console" tabindex="0" aria-label="Serial console"></pre>
+    <div id="problems" hidden></div>
+  </section>
+</main>
+<script type="module" nonce="{{nonce}}" src="{{webviewRoot}}/main.js"></script>
+</body>
+</html>

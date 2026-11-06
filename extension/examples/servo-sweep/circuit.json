@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "board",
+      "type": "metro-m0-express",
+      "x": 40,
+      "y": 40,
+      "rotation": 0,
+      "props": {}
+    },
+    {
+      "id": "servo1",
+      "type": "servo",
+      "x": 380,
+      "y": 240,
+      "rotation": 0,
+      "props": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "wire1",
+      "from": {
+        "part": "board",
+        "pin": "5V"
+      },
+      "to": {
+        "part": "servo1",
+        "pin": "V+"
+      },
+      "points": [],
+      "color": "#d33"
+    },
+    {
+      "id": "wire2",
+      "from": {
+        "part": "servo1",
+        "pin": "GND"
+      },
+      "to": {
+        "part": "board",
+        "pin": "GND1"
+      },
+      "points": [],
+      "color": "#222"
+    },
+    {
+      "id": "wire3",
+      "from": {
+        "part": "board",
+        "pin": "D9"
+      },
+      "to": {
+        "part": "servo1",
+        "pin": "SIG"
+      },
+      "points": [],
+      "color": "#ff9f0a"
+    }
+  ]
+}
