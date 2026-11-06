@@ -45,3 +45,10 @@ merging a change to the simulator, the panel or the firmware. `NODE` is set in t
 
 The last one opens and closes its own VS Code window. Set `SIM_VSCODE` to the VS Code executable if
 it is not found.
+
+## Release it
+
+The Release workflow builds the firmware, runs the tests and publishes a GitHub release with the
+`.vsix`. Run it from the Actions tab on `main`, and choose what kind of change the release holds.
+Pull requests that change the packaging build the `.vsix` without releasing it, and the file is
+attached to the workflow run.

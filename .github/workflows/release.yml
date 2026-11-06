@@ -1,0 +1,138 @@
+name: Release
+
+# Run from the Actions tab: builds the firmware, packages the extension and publishes a GitHub release with the .vsix.
+on:
+  workflow_dispatch:
+    inputs:
+      change:
+        description: What's in this release (picks the next version number)
+        type: choice
+        options:
+          - Bug fixes
+          - New features
+          - Breaking changes
+        default: Bug fixes
+      version:
+        description: Version number, e.g. 1.0.0 (optional; overrides the calculated one)
+        type: string
+        required: false
+  # Pull requests that change the packaging build the .vsix without releasing, so problems show up before a release.
+  pull_request:
+    branches: [main]
+    paths:
+      - packaging/**
+      - .github/workflows/release.yml
+      - firmware/setup.sh
+      - firmware/build.sh
+      - extension/scripts/copy-assets.js
+      - extension/.vscodeignore
+
+permissions:
+  contents: read
+
+# Two releases at once could pick the same version number.
+concurrency:
+  group: release-${{ github.event_name }}
+
+jobs:
+  version:
+    name: version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+    steps:
+      - name: Only release from main
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Releases are made from main. Choose main in 'Use workflow from'."
+          exit 1
+
+      - uses: actions/checkout@v5
+        with:
+          # The tags are needed to find the latest release.
+          fetch-depth: 0
+
+      - name: Next version
+        id: next
+        env:
+          # Pull requests have no inputs.
+          CHANGE: ${{ inputs.change || 'Bug fixes' }}
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          version=$(bash packaging/next-version.sh "$CHANGE" "$REQUESTED")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version" >> "$GITHUB_STEP_SUMMARY"
+
+  # The firmware isn't kept in Git and only builds on Windows for now. The .vsix it goes into runs on every platform.
+  build:
+    name: build
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install make
+        run: choco install make --no-progress -y
+
+      - name: Fetch the firmware's dependencies
+        run: |
+          git config --global core.longpaths true
+          sh firmware/setup.sh
+
+      - name: Build the firmware
+        run: sh firmware/build.sh -j4
+
+      - name: Test and package
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: bash packaging/package.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vsix
+          path: dist/*.vsix
+          if-no-files-found: error
+
+  # Pull requests run this too, up to creating the release, so a mismatch between the notes and the package shows up
+  # before a release.
+  release:
+    name: release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: vsix
+          path: dist
+
+      - name: Write the release notes
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          test -f "dist/metro-simulator-$VERSION.vsix"
+          sed "s/{{VERSION}}/$VERSION/g" packaging/release-notes.md > notes.md
+
+      - name: Create the release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          # The install instructions come first, then GitHub's list of changes since the last release.
+          gh release create "v$VERSION" dist/* --target "$GITHUB_SHA" --title "v$VERSION" --notes-file notes.md --generate-notes
