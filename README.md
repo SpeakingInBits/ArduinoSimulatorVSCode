@@ -30,3 +30,18 @@ Then open the `extension` folder in VS Code and press F5, or run it directly:
 ```bash
 code --extensionDevelopmentPath="$PWD/extension"
 ```
+
+## Test it
+
+GitHub runs the first of these on every pull request, on Windows, macOS and Linux. The firmware is
+not kept in Git, so the other two have to be run on a computer that has built it. Run them before
+merging a change to the simulator, the panel or the firmware. `NODE` is set in the build steps.
+
+| Command, from `extension` | What it covers | Needs |
+|---|---|---|
+| `"$NODE" --test test/circuit.test.js test/console.test.js` | Electrical models, circuit files, console text | Node only |
+| `"$NODE" --test test/*.test.js` | All of the above, plus real CircuitPython running real libraries | A built firmware |
+| `"$NODE" scripts/run-e2e.js` | The whole extension, in a real VS Code window | A built firmware and VS Code |
+
+The last one opens and closes its own VS Code window. Set `SIM_VSCODE` to the VS Code executable if
+it is not found.

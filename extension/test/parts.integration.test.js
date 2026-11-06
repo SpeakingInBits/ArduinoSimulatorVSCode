@@ -241,7 +241,7 @@ test('every example runs without an error', async () => {
   }
 });
 
-test('a print loop reaches the host in paced batches', async () => {
+test('a print loop reaches the host in paced batches', { timeout: 20000 }, async () => {
   const board = new Board({ files: { '/code.py': 'while True:\n    print("hello")\n' } });
   let messages = 0;
   board.on('serial', () => { messages++; });
