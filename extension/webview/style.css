@@ -212,13 +212,17 @@ body.running .part.interactive { cursor: pointer; }
   .palette, .inspector { border: none; border-bottom: 1px solid var(--border); }
 }
 
-/* The circuit diagram page. */
+/* The circuit diagram. In the builder it covers the 2D canvas the same way the 3D view does. */
 .diagram-stage { flex: 1; min-height: 0; position: relative; }
-#diagram { display: block; width: 100%; height: 100%; outline: none; touch-action: none; cursor: grab; }
-#diagram:active { cursor: grabbing; }
+#stage-diagram { position: absolute; inset: 0; background-color: var(--vscode-editor-background); }
+#stage-diagram[hidden] { display: none; }
+.schematic { display: block; width: 100%; height: 100%; outline: none; touch-action: none; cursor: grab; }
+.schematic:active { cursor: grabbing; }
+.schematic:focus-visible { outline: 1px solid var(--vscode-focusBorder, #39f); outline-offset: -1px; }
 .diagram-message { position: absolute; left: 16px; top: 12px; max-width: 460px; color: var(--muted); }
 .diagram-message h2 { margin: 0 0 6px; font-size: 14px; color: var(--vscode-foreground); }
 .diagram-message p { margin: 0 0 8px; }
+.diagram-summary { position: absolute; left: 8px; bottom: 6px; margin: 0; color: var(--muted); font-size: 11px; pointer-events: none; }
 
 .d-line, .d-wire { fill: none; stroke: var(--vscode-foreground); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 .d-solid { fill: var(--vscode-foreground); stroke: none; }
