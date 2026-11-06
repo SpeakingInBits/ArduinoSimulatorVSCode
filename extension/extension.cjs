@@ -6,6 +6,7 @@ const path = require('node:path');
 const vscode = require('vscode');
 
 const CIRCUIT_FILE = 'circuit.json';
+const DIAGRAM_VIEW = 'metroSim.diagram';
 const IGNORED = new Set(['.git', '.vscode', 'typings', 'node_modules', '__pycache__', CIRCUIT_FILE]);
 const MAX_PROJECT_BYTES = 2 * 1024 * 1024;
 const SAVE_DELAY_MS = 300;
@@ -81,6 +82,14 @@ async function saveProjectFiles(folder) {
       await document.save();
     }
   }
+}
+
+function pageHtml(context, webview, page) {
+  const webviewRoot = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'webview'));
+  return fs.readFileSync(path.join(context.extensionPath, 'webview', page), 'utf8')
+    .replaceAll('{{nonce}}', crypto.randomBytes(16).toString('hex'))
+    .replaceAll('{{cspSource}}', webview.cspSource)
+    .replaceAll('{{webviewRoot}}', webviewRoot.toString());
 }
 
 class Session {
@@ -175,15 +184,6 @@ class Session {
     await this.loadCircuit();
   }
 
-  html(webview) {
-    const root = this.context.extensionUri;
-    const webviewRoot = webview.asWebviewUri(vscode.Uri.joinPath(root, 'webview'));
-    return fs.readFileSync(path.join(this.context.extensionPath, 'webview', 'index.html'), 'utf8')
-      .replaceAll('{{nonce}}', crypto.randomBytes(16).toString('hex'))
-      .replaceAll('{{cspSource}}', webview.cspSource)
-      .replaceAll('{{webviewRoot}}', webviewRoot.toString());
-  }
-
   async open(folder) {
     if (!folder) {
       vscode.window.showWarningMessage('Open a project folder first, or create one with "New Project from Example".');
@@ -215,7 +215,7 @@ class Session {
         this.stop();
         this.panel = undefined;
       });
-      this.panel.webview.html = this.html(this.panel.webview);
+      this.panel.webview.html = pageHtml(this.context, this.panel.webview, 'index.html');
       await this.ready;
     }
     await this.loadCircuit();
@@ -226,6 +226,7 @@ class Session {
     switch (message.type) {
       case 'ready': this.markReady(); break;
       case 'save': this.saveCircuit(message.circuit); break;
+      case 'diagram': showDiagram(this.folder); break;
       case 'run': this.run(); break;
       case 'stop': this.stop(); break;
       case 'input': this.board?.write(message.text); break;
@@ -312,6 +313,49 @@ class Session {
       this.post({ type: 'test', id, step });
     });
   }
+}
+
+// Opens circuit.json as a diagram. It reads the file through VS Code, so it follows the builder's
+// saves and any typing in a text editor, and the file stays the only copy of the circuit.
+class DiagramEditor {
+  constructor(context) {
+    this.context = context;
+    this.shown = undefined; // What the page last drew, for the automated tests.
+  }
+
+  resolveCustomTextEditor(document, panel) {
+    const { webview } = panel;
+    const send = () => webview.postMessage({ type: 'load', text: document.getText() });
+    webview.options = { enableScripts: true, localResourceRoots: [this.context.extensionUri] };
+    const changes = vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.document === document) send();
+    });
+    panel.onDidDispose(() => changes.dispose());
+    webview.onDidReceiveMessage((message) => {
+      switch (message.type) {
+        case 'ready': send(); break;
+        case 'shown': this.shown = message; break;
+        case 'edit': session.open(path.dirname(document.uri.fsPath)); break;
+        case 'text': vscode.commands.executeCommand('vscode.openWith', document.uri, 'default'); break;
+        default: break;
+      }
+    });
+    webview.html = pageHtml(this.context, webview, 'diagram.html');
+  }
+}
+
+async function showDiagram(folder) {
+  if (!folder) {
+    vscode.window.showWarningMessage('Open a project folder first, or create one with "New Project from Example".');
+    return;
+  }
+  session.flushSave();
+  const file = path.join(folder, CIRCUIT_FILE);
+  if (!fs.existsSync(file)) {
+    vscode.window.showInformationMessage('This project has no circuit yet. Add a part in the circuit builder first.');
+    return;
+  }
+  await vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(file), DIAGRAM_VIEW, vscode.ViewColumn.Beside);
 }
 
 function copyFolder(from, to) {
@@ -432,9 +476,11 @@ async function copyToBoard() {
 
 function activate(context) {
   session = new Session(context);
+  const diagramEditor = new DiagramEditor(context);
   session.noteEditor(vscode.window.activeTextEditor);
   const command = (id, handler) => context.subscriptions.push(vscode.commands.registerCommand(id, handler));
   command('metroSim.open', () => session.open(projectFolder()));
+  command('metroSim.diagram', () => showDiagram(projectFolder()));
   command('metroSim.run', async () => {
     if (await session.open(projectFolder())) await session.run();
   });
@@ -444,6 +490,7 @@ function activate(context) {
   command('metroSim.setupEditor', () => setupEditor(context));
   command('metroSim.copyToBoard', copyToBoard);
   context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider(DIAGRAM_VIEW, diagramEditor),
     vscode.window.onDidChangeActiveTextEditor((editor) => session.noteEditor(editor)),
     vscode.workspace.onDidSaveTextDocument((document) => session.onDocumentSaved(document)),
     {
@@ -453,7 +500,7 @@ function activate(context) {
       },
     },
   );
-  return { session };
+  return { session, diagramEditor };
 }
 
 module.exports = { activate };

@@ -1,0 +1,55 @@
+<!doctype html>
+<!-- Developer preview of the circuit diagram outside VS Code. Serve the extension folder over HTTP
+     and open test/diagram-preview.html?example=dimmer, or ?parts to draw every part wired to the
+     board. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Diagram preview</title>
+<style>
+  :root {
+    --vscode-foreground: #ccc; --vscode-editor-background: #1e1e1e; --vscode-panel-border: #444;
+    --vscode-button-background: #0e639c; --vscode-button-foreground: #fff; --vscode-focusBorder: #39f;
+    --vscode-font-family: sans-serif; --vscode-editor-font-family: monospace; --vscode-descriptionForeground: #999;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --vscode-foreground: #333; --vscode-editor-background: #fff; --vscode-panel-border: #ccc; --vscode-descriptionForeground: #666; }
+  }
+</style>
+</head>
+<body>
+<script type="module">
+  const page = await (await fetch('../webview/diagram.html')).text();
+  document.body.innerHTML = page.match(/<body>([\s\S]*)<script/)[1];
+  const css = document.createElement('link');
+  css.rel = 'stylesheet';
+  css.href = '../webview/style.css';
+  document.head.append(css);
+  await new Promise((resolve) => { css.onload = resolve; });
+
+  const sent = [];
+  window.sentMessages = sent;
+  window.acquireVsCodeApi = () => ({ postMessage: (message) => sent.push(message) });
+  await import('../webview/diagram.js');
+
+  const { CATALOG, defaultProps, emptyCircuit } = await import('../shared/catalog.js');
+  const params = new URLSearchParams(location.search);
+  const example = params.get('example');
+  const file = params.get('file');
+  let text;
+  if (example) text = await (await fetch(`../examples/${example}/circuit.json`)).text();
+  else if (file) text = file;
+  else {
+    const circuit = emptyCircuit();
+    if (params.has('parts')) {
+      Object.entries(CATALOG).filter(([, entry]) => !entry.fixed && !entry.background).forEach(([type], i) => {
+        const id = type.replace(/[^a-z0-9]/g, '');
+        circuit.parts.push({ id, type, x: 2000 + i * 300, y: 2000, rotation: 0, props: defaultProps(type) });
+      });
+    }
+    text = JSON.stringify(circuit);
+  }
+  window.postMessage({ type: 'load', text });
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+  content="default-src 'none'; style-src {{cspSource}} 'unsafe-inline'; script-src {{cspSource}} 'nonce-{{nonce}}';">
+<link rel="stylesheet" href="{{webviewRoot}}/style.css">
+</head>
+<body>
+<header class="toolbar">
+  <button id="edit" class="primary" title="Open this circuit in the circuit builder">Edit circuit</button>
+  <button id="text" title="Open circuit.json as text">Show JSON</button>
+  <span class="divider"></span>
+  <button id="fit" title="Fit the diagram in view">Fit</button>
+  <span id="summary" class="status"></span>
+</header>
+<main class="diagram-stage">
+  <svg id="diagram" tabindex="0" role="img" aria-label="Circuit diagram"><g id="sheet"></g></svg>
+  <div id="message" class="diagram-message" hidden></div>
+</main>
+<script type="module" nonce="{{nonce}}" src="{{webviewRoot}}/diagram.js"></script>
+</body>
+</html>
