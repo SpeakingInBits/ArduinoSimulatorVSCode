@@ -34,7 +34,8 @@ int sim_i2c_pullups(int scl, int sda);
 int sim_i2c_probe(int address);
 int sim_i2c_write(int address, const uint8_t *data, uint32_t len);
 int sim_i2c_read(int address, uint8_t *data, uint32_t len);
-void sim_spi_transfer(int clock, const uint8_t *out, uint8_t *in, uint32_t len, int write_value);
+// mosi is -1 for a bus with no data out pin.
+void sim_spi_transfer(int clock, int mosi, const uint8_t *out, uint8_t *in, uint32_t len, int write_value);
 void sim_parallel_write(int data0, const uint8_t *data, uint32_t len);
 void sim_uart_write(int tx, const uint8_t *data, uint32_t len);
 uint32_t sim_uart_available(int rx);

@@ -21,6 +21,14 @@ while True:
     time.sleep(0.02)
 `;
 
+const TICKING_CODE = `import time
+while True:
+    print("TICK")
+    time.sleep(0.03)
+`;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const pinOf = (doc, id, pin, catalog) => {
   const part = doc.parts.find((p) => p.id === id);
   const definition = catalog.definition(part.type).pins.find((p) => p.id === pin);
@@ -41,7 +49,11 @@ async function run() {
     const extension = vscode.extensions.getExtension('speakinginbits.metro-simulator');
     const { session } = extension.exports;
     const catalog = await import(path.join(extension.extensionPath, 'shared', 'catalog.js').replace(/\\/g, '/').replace(/^([A-Z]):/, 'file:///$1:'));
-    const step = (action) => session.testStep(action);
+    // A step that fails inside the page never answers, so give up rather than hang.
+    const step = (action) => Promise.race([
+      session.testStep(action),
+      sleep(15000).then(() => { throw new Error(`No answer from the page for ${JSON.stringify(action)}`); }),
+    ]);
 
     // Place parts from the palette and drag them into position.
     const resistor = (await step({ action: 'palette', type: 'resistor' })).id;
@@ -105,7 +117,6 @@ async function run() {
     const final = await step({ action: 'read' });
     report.sharedArrayBufferInWebview = final.sharedArrayBuffer;
     report.problems = final.problems;
-    report.passed = true;
 
     // Autocomplete setup writes stubs and settings into the project.
     await vscode.commands.executeCommand('metroSim.setupEditor');
@@ -126,6 +137,84 @@ async function run() {
     await step({ action: 'pressPart', point: { x: exampleButton.x + 10, y: exampleButton.y + 15 } });
     report.steps.exampleLedBrightness = await waitBright(step, 'led1', true);
     report.problems = (await step({ action: 'read' })).problems;
+
+    // The panel's Run button saves and runs what is typed, even though the panel has the focus.
+    const program = await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file), vscode.ViewColumn.One);
+    await vscode.commands.executeCommand('metroSim.open');
+    await program.edit((edit) => edit.insert(new vscode.Position(0, 0), 'print("UNSAVED EDIT")\n'));
+    await vscode.commands.executeCommand('workbench.action.focusNextGroup');
+    await sleep(500);
+    report.steps.activeEditorWithPanelFocused = vscode.window.activeTextEditor?.document.fileName ?? null;
+    if (report.steps.activeEditorWithPanelFocused !== null) throw new Error('The panel did not take the focus');
+    await step({ action: 'click', selector: '#run' });
+    await step({ action: 'waitConsole', text: 'UNSAVED EDIT' });
+    if (program.document.isDirty) throw new Error('Run did not save the program');
+
+    // Restart returns the controls to their defaults, on the page as well as on the board.
+    await step({ action: 'slider', key: `${pot}:position`, value: 0.25 });
+    await step({ action: 'click', selector: '#run' });
+    await sleep(300);
+    await step({ action: 'waitConsole', text: 'READY' });
+    const restarted = await step({ action: 'read' });
+    report.steps.sliderAfterRestart = restarted.sliders[`${pot}:position`];
+    if (Number(report.steps.sliderAfterRestart) !== 0.5 || Object.keys(restarted.controlValues).length > 0) {
+      throw new Error('Restart left old control values on the page');
+    }
+
+    // A double click on Run leaves one board, and Stop stops it.
+    const reopened = await vscode.window.showTextDocument(program.document, vscode.ViewColumn.One);
+    await reopened.edit((edit) => edit.replace(new vscode.Range(0, 0, reopened.document.lineCount, 0), TICKING_CODE));
+    await Promise.all([step({ action: 'click', selector: '#run' }), step({ action: 'click', selector: '#run' })]);
+    await sleep(600);
+    await step({ action: 'waitConsole', text: 'TICK' });
+    await step({ action: 'click', selector: '#stop' });
+    await step({ action: 'waitRunning', running: false });
+    await sleep(300);
+    const afterStop = (await step({ action: 'read' })).console;
+    await sleep(500);
+    report.steps.outputStoppedAfterStop = afterStop === (await step({ action: 'read' })).console;
+    if (!report.steps.outputStoppedAfterStop) throw new Error('A board kept running after Stop');
+
+    // A file in lib/ belongs to the project around it.
+    fs.mkdirSync(path.join(folder, 'lib'), { recursive: true });
+    fs.writeFileSync(path.join(folder, 'lib', 'helper.py'), 'VALUE = 1\n');
+    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(path.join(folder, 'lib', 'helper.py')), vscode.ViewColumn.One);
+    await vscode.commands.executeCommand('metroSim.open');
+    report.steps.folderFromLib = path.basename(session.folder);
+    if (path.relative(session.folder, folder) !== '') throw new Error(`lib/ became the project: ${session.folder}`);
+
+    // A broken circuit.json is reported and left alone until it is fixed.
+    const circuitFile = path.join(folder, 'circuit.json');
+    const goodCircuit = fs.readFileSync(circuitFile, 'utf8');
+    const circuitEditor = await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(circuitFile), vscode.ViewColumn.One);
+    await circuitEditor.edit((edit) => edit.insert(new vscode.Position(0, 0), 'not json '));
+    await circuitEditor.document.save();
+    await sleep(500);
+    const broken = await step({ action: 'read' });
+    report.steps.brokenCircuitError = broken.loadError;
+    if (!broken.loadError) throw new Error('A broken circuit.json was not reported');
+    await step({ action: 'palette', type: 'resistor' });
+    await sleep(600);
+    if (!fs.readFileSync(circuitFile, 'utf8').startsWith('not json ')) throw new Error('A broken circuit.json was overwritten');
+    await circuitEditor.edit((edit) => edit.delete(new vscode.Range(0, 0, 0, 9)));
+    await circuitEditor.document.save();
+    await sleep(500);
+    const repaired = await step({ action: 'read' });
+    if (repaired.loadError || (await step({ action: 'doc' })).wires.length !== 8) throw new Error('The fixed circuit.json did not load');
+    if (fs.readFileSync(circuitFile, 'utf8') !== goodCircuit) throw new Error('circuit.json changed');
+
+    // Autocomplete setup keeps existing settings, and never rewrites a file with comments.
+    const settingsFile = path.join(folder, '.vscode', 'settings.json');
+    const commented = '{\n  // Keep this comment\n  "editor.tabSize": 2,\n}\n';
+    fs.writeFileSync(settingsFile, commented);
+    await vscode.commands.executeCommand('metroSim.setupEditor');
+    if (fs.readFileSync(settingsFile, 'utf8') !== commented) throw new Error('Setup rewrote a settings file with comments');
+    fs.writeFileSync(settingsFile, '{ "editor.tabSize": 2, "python.analysis.extraPaths": ["other"] }');
+    await vscode.commands.executeCommand('metroSim.setupEditor');
+    const merged = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+    report.steps.mergedSettings = merged;
+    if (merged['editor.tabSize'] !== 2 || merged['python.analysis.extraPaths'].join() !== 'other,lib') throw new Error('Setup lost existing settings');
+    report.passed = true;
   } catch (error) {
     report.passed = false;
     report.error = String(error?.stack ?? error);

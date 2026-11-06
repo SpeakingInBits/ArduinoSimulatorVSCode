@@ -159,9 +159,13 @@ void common_hal_busio_spi_unlock(busio_spi_obj_t *self) {
     self->has_lock = false;
 }
 
+static int mosi_number(busio_spi_obj_t *self) {
+    return self->mosi != NULL ? self->mosi->number : -1;
+}
+
 bool common_hal_busio_spi_write(busio_spi_obj_t *self, const uint8_t *data, size_t len) {
     if (len > 0) {
-        sim_spi_transfer(self->clock->number, data, NULL, len, 0);
+        sim_spi_transfer(self->clock->number, mosi_number(self), data, NULL, len, 0);
     }
     return true;
 }
@@ -169,7 +173,7 @@ bool common_hal_busio_spi_write(busio_spi_obj_t *self, const uint8_t *data, size
 bool common_hal_busio_spi_read(busio_spi_obj_t *self, uint8_t *data, size_t len,
     uint8_t write_value) {
     if (len > 0) {
-        sim_spi_transfer(self->clock->number, NULL, data, len, write_value);
+        sim_spi_transfer(self->clock->number, mosi_number(self), NULL, data, len, write_value);
     }
     return true;
 }
@@ -177,7 +181,7 @@ bool common_hal_busio_spi_read(busio_spi_obj_t *self, uint8_t *data, size_t len,
 bool common_hal_busio_spi_transfer(busio_spi_obj_t *self, const uint8_t *data_out,
     uint8_t *data_in, size_t len) {
     if (len > 0) {
-        sim_spi_transfer(self->clock->number, data_out, data_in, len, 0);
+        sim_spi_transfer(self->clock->number, mosi_number(self), data_out, data_in, len, 0);
     }
     return true;
 }

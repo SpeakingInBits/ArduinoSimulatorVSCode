@@ -1,11 +1,16 @@
 // Tests the electrical model without running any firmware.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BOARD_PINS, CATALOG, defaultProps, emptyCircuit, pinPosition } from '../shared/catalog.js';
+import { BOARD_PINS, CATALOG, circuitProblem, defaultProps, emptyCircuit, pinPosition } from '../shared/catalog.js';
 import { buildNets, pinKey } from '../shared/nets.js';
 import { Circuit, PIN_MODE } from '../sim/circuit.js';
 import { MODELS } from '../sim/models.js';
 import { Solver } from '../sim/solver.js';
+
+const PWM_MOTOR_DRIVER = [
+  ['board:D9', 'd:EN1'], ['board:D8', 'd:IN1'], ['board:D7', 'd:IN2'], ['board:3V', 'd:VCC'], ['board:GND1', 'd:GND1'],
+  ['b:+', 'd:VS'], ['b:-', 'board:GND1'], ['d:OUT1', 'm:1'], ['d:OUT2', 'm:2'],
+];
 
 let nextId = 0;
 function build(parts, wires) {
@@ -267,4 +272,95 @@ test('fast-toggled pin shows as a dim LED', () => {
   sim.circuit.frame(sim.circuit.now());
   const { brightness } = sim.circuit.parts.get('l').model.view(sim.circuit.parts.get('l').context);
   assert.ok(brightness > 0.2 && brightness < 0.8, `brightness ${brightness}`);
+});
+
+test('PWM on an L293D enable pin sets the motor speed, whatever order the parts are in', () => {
+  const speedAt = (duty, parts) => {
+    const sim = build(parts, PWM_MOTOR_DRIVER);
+    sim.output('D8', 1);
+    sim.output('D7', 0);
+    sim.circuit.pinMode(BOARD_PINS.D9, PIN_MODE.PWM, 0, false);
+    sim.circuit.pwmSet(BOARD_PINS.D9, 1000, Math.round(65535 * duty));
+    return sim.view('m').speed;
+  };
+  const driver = { id: 'd', type: 'l293d' };
+  const motor = { id: 'm', type: 'dc-motor' };
+  const battery = { id: 'b', type: 'battery', props: { volts: 6 } };
+  const half = speedAt(0.5, [driver, motor, battery]);
+  assert.ok(half > 0.4 && half < 0.8, `speed ${half}`);
+  assert.ok(speedAt(0.25, [driver, motor, battery]) < half);
+  assert.equal(speedAt(0.5, [motor, battery, driver]), half);
+});
+
+test('sampling a toggling pin does not trip parts watching a driven output', () => {
+  const sim = build([
+    { id: 'd', type: 'l293d' }, { id: 'b', type: 'battery', props: { volts: 6 } }, { id: 'r', type: 'relay-module' },
+  ], [
+    ['board:D9', 'd:EN1'], ['board:D8', 'd:IN1'], ['board:3V', 'd:VCC'], ['board:GND1', 'd:GND1'],
+    ['b:+', 'd:VS'], ['b:-', 'board:GND1'], ['d:OUT1', 'r:IN'], ['board:3V', 'r:VCC'], ['board:GND1', 'r:GND'],
+  ]);
+  sim.output('D8', 1);
+  sim.circuit.pinMode(BOARD_PINS.D9, PIN_MODE.PWM, 0, false);
+  sim.circuit.pwmSet(BOARD_PINS.D9, 1000, 32768);
+  sim.advance(40);
+  const relay = sim.circuit.parts.get('r').context;
+  assert.equal(sim.view('r').energized, false);
+  assert.equal(relay.no.closed, false);
+});
+
+test('a pin held by a conducting transistor is not floating', () => {
+  const mosfet = build([{ id: 'q', type: 'nmos' }], [['board:D2', 'q:D'], ['q:S', 'board:GND1'], ['board:D3', 'q:G']]);
+  mosfet.output('D3', 0);
+  assert.equal(mosfet.circuit.isFloating(mosfet.circuit.pin(BOARD_PINS.D2).node), true);
+  mosfet.output('D3', 1);
+  assert.equal(mosfet.input('D2'), 0);
+  assert.equal(mosfet.circuit.isFloating(mosfet.circuit.pin(BOARD_PINS.D2).node), false);
+  assert.equal(mosfet.circuit.adcRead(BOARD_PINS.D2), 0);
+
+  const npn = build([{ id: 'q', type: 'npn' }, { id: 'r', type: 'resistor', props: { ohms: 1000 } }],
+    [['board:D2', 'q:C'], ['q:E', 'board:GND1'], ['board:D3', 'r:1'], ['r:2', 'q:B']]);
+  npn.output('D3', 1);
+  assert.equal(npn.input('D2'), 0);
+  assert.equal(npn.circuit.problems.size, 0);
+});
+
+test('SPI data only reaches a part through its data pin', () => {
+  const wires = [['board:SCK', 's:SHCP'], ['board:D5', 's:STCP'], ['board:3V', 's:VCC'], ['board:GND1', 's:GND'], ['board:3V', 's:MR'], ['board:GND1', 's:OE']];
+  const send = (extra, byte = 0xaa) => {
+    const sim = build([{ id: 's', type: 'shift-register' }], [...wires, ...extra]);
+    sim.output('D5', 0);
+    sim.circuit.spiTransfer(BOARD_PINS.SCK, new Uint8Array([byte]), BOARD_PINS.MOSI);
+    sim.circuit.pinWrite(BOARD_PINS.D5, 1);
+    return sim.circuit.parts.get('s').context.latched;
+  };
+  assert.equal(send([['board:MOSI', 's:DS']]), 0xaa);
+  assert.equal(send([]), 0, 'DS left unconnected');
+  assert.equal(send([['board:3V', 's:DS']]), 0xff, 'DS tied high');
+});
+
+test('SPI bytes move along a chain of shift registers', () => {
+  const chip = (id) => [[`board:SCK`, `${id}:SHCP`], ['board:D5', `${id}:STCP`], ['board:3V', `${id}:VCC`], ['board:GND1', `${id}:GND`], ['board:3V', `${id}:MR`], ['board:GND1', `${id}:OE`]];
+  // The later chip is listed first, so this also shows order in the file does not matter.
+  const sim = build([{ id: 'second', type: 'shift-register' }, { id: 'first', type: 'shift-register' }],
+    [...chip('first'), ...chip('second'), ['board:MOSI', 'first:DS'], ['first:Q7S', 'second:DS']]);
+  sim.output('D5', 0);
+  sim.circuit.spiTransfer(BOARD_PINS.SCK, new Uint8Array([0xaa, 0x55]), BOARD_PINS.MOSI);
+  sim.circuit.pinWrite(BOARD_PINS.D5, 1);
+  assert.equal(sim.circuit.parts.get('first').context.latched, 0x55);
+  assert.equal(sim.circuit.parts.get('second').context.latched, 0xaa);
+});
+
+test('a saved circuit that cannot be used is explained', () => {
+  const good = emptyCircuit();
+  assert.equal(circuitProblem(good), null);
+  assert.match(circuitProblem({}), /list of parts/);
+  assert.match(circuitProblem({ parts: [], wires: [] }), /exactly one board/);
+  const withPart = (part) => ({ ...good, parts: [...good.parts, { id: 'p', type: 'led', x: 0, y: 0, ...part }] });
+  assert.equal(circuitProblem(withPart({})), null);
+  assert.match(circuitProblem(withPart({ type: 'flux-capacitor' })), /unknown type/);
+  assert.match(circuitProblem(withPart({ type: 'constructor' })), /unknown type/);
+  assert.match(circuitProblem(withPart({ id: 'board' })), /Two parts/);
+  assert.match(circuitProblem(withPart({ id: 'a:b' })), /invalid id/);
+  assert.match(circuitProblem(withPart({ x: undefined })), /no position/);
+  assert.match(circuitProblem({ ...good, wires: [{ from: { part: 'board' } }] }), /missing one of its ends/);
 });

@@ -2,6 +2,7 @@
 //   setup(ctx)     add electrical elements and pin watchers
 //   start(ctx)     run once the circuit is solvable
 //   onControl(ctx, id, value)  react to the student using the part
+//   follow(ctx)    re-drive outputs from the present inputs, before anything is measured
 //   sample(ctx, phase)  record measurements, 'high' and 'low' for fast-toggling pins
 //   view(ctx)      what the panel should draw
 //   i2c, spi, neopixel  bus behaviour
@@ -332,7 +333,7 @@ export const MODELS = {
     },
     start: (ctx) => MODELS.tmp36.update(ctx),
     onControl: (ctx) => MODELS.tmp36.update(ctx),
-    sample: (ctx) => MODELS.tmp36.update(ctx),
+    follow: (ctx) => MODELS.tmp36.update(ctx),
     view: (ctx) => ({ celsius: ctx.controls.celsius, powered: ctx.powered('VS', 'GND', 2.5) }),
   },
   dht: {
@@ -427,7 +428,7 @@ export const MODELS = {
       ctx.out.set(ctx.controls.motion || ctx.now() < ctx.triggeredUntil ? VCC : 0);
     },
     start: (ctx) => MODELS.pir.update(ctx),
-    sample: (ctx) => MODELS.pir.update(ctx),
+    follow: (ctx) => MODELS.pir.update(ctx),
     onControl(ctx, id, value) {
       if (value) ctx.triggeredUntil = ctx.now() + 2000;
       MODELS.pir.update(ctx);
@@ -451,7 +452,7 @@ export const MODELS = {
       ctx.digital.set(ctx.controls.level > 0.5 ? supply : 0);
     },
     start: (ctx) => MODELS['sound-sensor'].update(ctx),
-    sample: (ctx) => MODELS['sound-sensor'].update(ctx),
+    follow: (ctx) => MODELS['sound-sensor'].update(ctx),
     onControl: (ctx) => MODELS['sound-sensor'].update(ctx),
     view: (ctx) => ({ level: ctx.controls.level }),
   },
@@ -465,7 +466,7 @@ export const MODELS = {
       ctx.out.set(supply < 2.5 ? null : supply * ctx.controls.level * 0.8);
     },
     start: (ctx) => MODELS['water-sensor'].update(ctx),
-    sample: (ctx) => MODELS['water-sensor'].update(ctx),
+    follow: (ctx) => MODELS['water-sensor'].update(ctx),
     onControl: (ctx) => MODELS['water-sensor'].update(ctx),
     view: (ctx) => ({ level: ctx.controls.level }),
   },
@@ -733,6 +734,7 @@ export const MODELS = {
     },
     spi: {
       clockPin: 'CLK',
+      dataPin: 'DIN',
       transfer(ctx, data) {
         ctx.pending.push(...data);
       },
@@ -913,9 +915,18 @@ export const MODELS = {
     start: (ctx) => MODELS['shift-register'].drive(ctx),
     spi: {
       clockPin: 'SHCP',
+      dataPin: 'DS',
+      outPin: 'Q7S',
+      // Each byte pushes the previous one out of Q7S and into the next chip in a chain.
       transfer(ctx, data) {
-        for (const byte of data) ctx.shift = byte;
+        const enabled = ctx.level('MR');
+        const shiftedOut = data.map((byte) => {
+          const previous = ctx.shift;
+          ctx.shift = enabled ? byte : 0;
+          return previous;
+        });
         MODELS['shift-register'].drive(ctx);
+        return shiftedOut;
       },
     },
     view: (ctx) => ({ value: ctx.latched }),
@@ -944,7 +955,7 @@ export const MODELS = {
       }
     },
     start: (ctx) => ctx.update(),
-    sample: (ctx) => ctx.update(),
+    follow: (ctx) => ctx.update(),
   },
 
   battery: {

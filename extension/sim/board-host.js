@@ -1,6 +1,7 @@
 // Host-side handle for one running simulation.
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { controlSlots, emptyCircuit } from '../shared/catalog.js';
@@ -10,6 +11,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 // Stands in for the M0's 32KB of SRAM minus .data, .bss and the stack.
 const METRO_M0_PORT_HEAP_BYTES = 24 * 1024;
+// A program can print for hours, so only recent output is kept for waitForOutput().
+const MAX_OUTPUT_CHARS = 1024 * 1024;
 
 export class Board extends EventEmitter {
   constructor({
@@ -18,6 +21,8 @@ export class Board extends EventEmitter {
   }) {
     super();
     this.output = '';
+    // A batch can end part way through a multi-byte character.
+    this.decoder = new StringDecoder('utf8');
     this.slots = controlSlots(circuit);
     this.slotIndex = new Map(this.slots.map((slot, i) => [`${slot.part}:${slot.control}`, i]));
     this.shared = createShared(this.slots.length);
@@ -38,8 +43,8 @@ export class Board extends EventEmitter {
 
   handle(message) {
     if (message.type === 'serial') {
-      const text = Buffer.from(message.data).toString('utf8');
-      this.output += text;
+      const text = this.decoder.write(Buffer.from(message.data));
+      this.output = (this.output + text).slice(-MAX_OUTPUT_CHARS);
       this.emit('serial', text);
     } else if (message.type === 'crash') {
       this.emit('crash', message.message);

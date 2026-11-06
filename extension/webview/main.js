@@ -32,9 +32,11 @@ const state = {
   held: new Set(),
   colorIndex: 0,
   controlValues: {},
+  loadError: undefined, // Why circuit.json could not be used. Nothing can be edited until it is fixed.
 };
 
 const partById = (id) => state.doc.parts.find((part) => part.id === id);
+const locked = () => state.running || !!state.loadError;
 const snap = (value) => Math.round(value / GRID) * GRID;
 
 function nextId(prefix) {
@@ -59,7 +61,7 @@ function changed() {
 }
 
 function restore(from, to) {
-  if (from.length === 0 || state.running) return;
+  if (from.length === 0 || locked()) return;
   to.push(JSON.stringify(state.doc));
   state.doc = JSON.parse(from.pop());
   state.selection = null;
@@ -200,13 +202,14 @@ function updatePart(id) {
 }
 
 function updateToolbar() {
-  $('undo').disabled = state.running || state.undo.length === 0;
-  $('redo').disabled = state.running || state.redo.length === 0;
-  const selected = !!state.selection && !state.running;
+  $('undo').disabled = locked() || state.undo.length === 0;
+  $('redo').disabled = locked() || state.redo.length === 0;
+  const selected = !!state.selection && !locked();
   const fixed = state.selection?.kind === 'part' && definition(partById(state.selection.id)?.type ?? 'resistor').fixed;
   $('rotate').disabled = !selected || state.selection.kind !== 'part' || fixed;
   $('delete').disabled = !selected || fixed;
   $('run').textContent = state.running ? 'Restart' : 'Run';
+  $('run').disabled = !!state.loadError;
   $('stop').disabled = !state.running;
   document.body.classList.toggle('running', state.running);
 }
@@ -229,7 +232,7 @@ function renderPalette(filter = '') {
 }
 
 function addPart(type) {
-  if (state.running) return;
+  if (locked()) return;
   const box = canvas.getBoundingClientRect();
   const entry = definition(type);
   const count = state.doc.parts.length;
@@ -251,7 +254,7 @@ function addPart(type) {
 
 function deleteSelection() {
   const { selection } = state;
-  if (!selection || state.running) return;
+  if (!selection || locked()) return;
   if (selection.kind === 'part') {
     const part = partById(selection.id);
     if (!part || definition(part.type).fixed) return;
@@ -267,7 +270,7 @@ function deleteSelection() {
 }
 
 function rotateSelection() {
-  if (state.selection?.kind !== 'part' || state.running) return;
+  if (state.selection?.kind !== 'part' || locked()) return;
   const part = partById(state.selection.id);
   if (!part || definition(part.type).fixed) return;
   snapshot();
@@ -276,7 +279,7 @@ function rotateSelection() {
 }
 
 function duplicateSelection() {
-  if (state.selection?.kind !== 'part' || state.running) return;
+  if (state.selection?.kind !== 'part' || locked()) return;
   const part = partById(state.selection.id);
   if (!part || definition(part.type).fixed) return;
   snapshot();
@@ -381,6 +384,11 @@ canvas.addEventListener('pointerdown', (event) => {
     } else {
       state.panning = { x: event.clientX - state.pan.x, y: event.clientY - state.pan.y };
     }
+    return;
+  }
+
+  if (state.loadError) {
+    state.panning = { x: event.clientX - state.pan.x, y: event.clientY - state.pan.y };
     return;
   }
 
@@ -525,7 +533,9 @@ function formatChoice(value, unit) {
 function renderInspector() {
   const { selection } = state;
   let html = '';
-  if (selection?.kind === 'part') {
+  if (state.loadError) {
+    html += `<h2>circuit.json needs fixing</h2><p>${state.loadError.replace(/</g, '&lt;')}</p><p>Your file has not been changed. Fix it and save it, and the circuit will load.</p>`;
+  } else if (selection?.kind === 'part') {
     const part = partById(selection.id);
     if (part) {
       const entry = definition(part.type);
@@ -641,16 +651,17 @@ $('controls').addEventListener('click', (event) => {
 const consoleElement = $('console');
 let partialSerial = '';
 
+// The end of an escape sequence that has not finished arriving. The length limit stops a stray
+// escape character from holding back everything printed after it.
+const UNFINISHED_ESCAPE = /\x1b(?:\][^\x1b]{0,200}\x1b?|\[[0-9;]{0,20})?$/;
+
 function appendSerial(chunk) {
-  // An escape sequence can arrive split across writes, so hold back an unfinished one.
+  // An escape sequence can arrive split across batches, so hold back an unfinished one.
   let text = partialSerial + chunk;
-  partialSerial = '';
-  const escape = text.lastIndexOf('\x1b');
-  if (escape >= 0 && !/^\x1b(\][^\x1b]*\x1b\\|\[[0-9;]*[A-Za-z])/.test(text.slice(escape)) && !text.endsWith('\x1b\\')) {
-    partialSerial = text.slice(escape);
-    text = text.slice(0, escape);
-  }
-  const title = text.match(/\x1b\]0;(.*?)\x1b\\/);
+  const unfinished = text.match(UNFINISHED_ESCAPE);
+  partialSerial = unfinished ? unfinished[0] : '';
+  if (unfinished) text = text.slice(0, unfinished.index);
+  const title = [...text.matchAll(/\x1b\]0;(.*?)\x1b\\/g)].at(-1);
   if (title) $('board-title').textContent = title[1];
   const clean = text.replace(/\x1b\].*?\x1b\\/g, '').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\r/g, '');
   let content = consoleElement.textContent;
@@ -790,15 +801,13 @@ function setRunning(running) {
   const wasRunning = state.running;
   state.running = running;
   state.wiring = null;
-  if (!running) {
-    state.views = {};
-    state.board = {};
-    state.boardText = undefined;
-    state.controlValues = {};
-    stopSound();
-  } else if (!wasRunning) {
-    audioContext().resume?.();
-  }
+  // Every run is a new board, with all its parts and controls back at their defaults.
+  state.views = {};
+  state.board = {};
+  state.boardText = undefined;
+  state.controlValues = {};
+  stopSound();
+  if (running && !wasRunning) audioContext().resume?.();
   $('status').textContent = running ? 'Running' : 'Stopped';
   render();
 }
@@ -806,6 +815,7 @@ function setRunning(running) {
 const handlers = {
   load(message) {
     state.doc = message.circuit ?? emptyCircuit();
+    state.loadError = message.error;
     state.undo = [];
     state.redo = [];
     state.selection = null;

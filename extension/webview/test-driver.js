@@ -105,6 +105,9 @@ export async function runTestStep(step, { state, toScreen, fit }) {
         board: state.board,
         problems: state.problems,
         running: state.running,
+        loadError: state.loadError,
+        controlValues: state.controlValues,
+        sliders: Object.fromEntries([...document.querySelectorAll('[data-slider]')].map((input) => [input.dataset.slider, input.value])),
         crossOriginIsolated: self.crossOriginIsolated,
         sharedArrayBuffer: typeof SharedArrayBuffer,
       };

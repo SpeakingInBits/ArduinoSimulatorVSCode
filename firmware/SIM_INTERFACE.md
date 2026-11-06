@@ -112,7 +112,7 @@ The firmware checks all pin rules before calling these, so the host never sees a
 | `i2cProbe(address)` | truthy if present | |
 | `i2cWrite(address, data: Uint8Array)` | 0, or a positive errno | 19 (ENODEV) for a missing device |
 | `i2cRead(address, buffer: Uint8Array)` | 0, or a positive errno | Fill `buffer` in place. Only valid during the call |
-| `spiTransfer(clock, data: Uint8Array)` | `Uint8Array` | `clock` is the SCK pin, which identifies the bus. Return at least `data.length` bytes. For a read, `data` is filled with the byte Python asked to send |
+| `spiTransfer(clock, data: Uint8Array, mosi)` | `Uint8Array` | `clock` is the SCK pin, which identifies the bus. `mosi` is the data out pin, or -1 if the bus has none. Return at least `data.length` bytes. For a read, `data` is filled with the byte Python asked to send |
 | `parallelWrite(data0, data: Uint8Array)` | nothing | **New.** One byte per write strobe. `data0` is the pin number of data line 0. Data/command and chip select arrive as ordinary `pinWrite` calls on their pins |
 | `uartWrite(tx, data: Uint8Array)` | nothing | Return at once. The firmware waits for the bytes' time on the wire |
 | `uartAvailable(rx)` | number | Bytes received and not yet read |
