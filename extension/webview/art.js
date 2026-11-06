@@ -1,10 +1,10 @@
 // SVG drawings for every part, in the part's own coordinates. Colors here are the physical
 // color of each object, so they deliberately stay the same in light and dark themes.
 
-const LED_HEX = {
+export const LED_HEX = {
   red: '#ff3b30', green: '#34c759', blue: '#2f7bff', yellow: '#ffd60a', white: '#f5f5f5', orange: '#ff9f0a', infrared: '#7a4b8c',
 };
-const BAND = ['#111', '#7a4a1e', '#d62828', '#f77f00', '#fcbf49', '#2a9d3f', '#1d6fd1', '#7b2cbf', '#888', '#eee'];
+export const BAND = ['#111', '#7a4a1e', '#d62828', '#f77f00', '#fcbf49', '#2a9d3f', '#1d6fd1', '#7b2cbf', '#888', '#eee'];
 
 const text = (x, y, value, size = 6, fill = '#fff', anchor = 'middle') => (
   `<text x="${x}" y="${y}" font-size="${size}" fill="${fill}" text-anchor="${anchor}" font-family="sans-serif">${value}</text>`);
@@ -23,7 +23,7 @@ function module(w, h, color, title, pinNames, y = h, x = 0) {
   return rect(-4 + x, -4, w + 8, h + 8 - 4, color, 2) + text(w / 2, h / 2 - 2, title, 6) + pads(pinNames.map((_, i) => [x + i * 10, y])) + pinLabels(pinNames, y, 10, x);
 }
 
-function resistorBands(ohms) {
+export function resistorBands(ohms) {
   const digits = String(Math.round(ohms));
   const first = Number(digits[0]);
   const second = Number(digits[1] ?? 0);

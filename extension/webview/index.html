@@ -17,6 +17,7 @@
   <button id="delete" title="Delete selection (Del)">Delete</button>
   <span class="divider"></span>
   <button id="fit" title="Fit the circuit in view">Fit</button>
+  <button id="view3d" title="Look at the circuit in 3D">3D view</button>
   <span id="status" class="status">Stopped</span>
 </header>
 <main class="layout">
@@ -34,6 +35,7 @@
         <g id="layer-overlay"></g>
       </g>
     </svg>
+    <div id="stage3d" hidden><p class="hint">Drag to turn. Shift-drag to move. Scroll to zoom.</p></div>
     <div id="tooltip" class="tooltip" hidden></div>
   </section>
   <aside class="inspector" aria-label="Details">
