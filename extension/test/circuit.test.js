@@ -83,7 +83,7 @@ test('solver: transistor switches a load from its base', () => {
 });
 
 test('every placeable part has a model or is deliberately passive', () => {
-  const passive = new Set(['metro-m0-express', 'breadboard-half', 'breadboard-full', 'capacitor']);
+  const passive = new Set(['metro-m0-express', 'breadboard-half', 'breadboard-full', 'note']);
   for (const type of Object.keys(CATALOG)) {
     assert.ok(MODELS[type] || passive.has(type), `${type} has no model`);
   }

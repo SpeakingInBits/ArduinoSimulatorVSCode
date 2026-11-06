@@ -4,6 +4,7 @@
 //   onControl(ctx, id, value)  react to the student using the part
 //   follow(ctx)    re-drive outputs from the present inputs, before anything is measured
 //   sample(ctx, phase)  record measurements, 'high' and 'low' for fast-toggling pins
+//   check(ctx)     report the part being used outside its ratings, once a frame
 //   view(ctx)      what the panel should draw
 //   i2c, spi, neopixel  bus behaviour
 import { VCC } from './circuit.js';
@@ -11,6 +12,26 @@ import { Ds18b20 } from './onewire.js';
 
 const LED_BURN_AMPS = 0.04;
 const LED_FULL_AMPS = 0.01;
+const LED_REVERSE_WARN_VOLTS = 1;
+const LED_REVERSE_MAX_VOLTS = 5;
+const RESISTOR_WATTS = 0.25;
+const DIODE_MAX_AMPS = 1;
+const NPN_MAX_COLLECTOR_AMPS = 0.6;
+const NPN_MAX_BASE_AMPS = 0.1;
+const BATTERY_MAX_AMPS = 2;
+// Below 1uF a capacitor is usually ceramic, which has no polarity.
+const POLARIZED_MICROFARADS = 1;
+const CAPACITOR_MAX_VOLTS = 16;
+const CAPACITOR_REVERSE_VOLTS = 0.5;
+
+// The meter's dial, in the order of its `mode` control.
+const METER_AMPS = 1;
+const METER_OHMS = 2;
+const METER_SHUNT_OHMS = 0.5;
+const METER_FUSE_AMPS = 1;
+const METER_TEST_VOLTS = 0.2;
+const METER_TEST_OHMS = 10000;
+const METER_MAX_OHMS = 4e7;
 
 const FORWARD_VOLTS = { red: 1.8, orange: 2, yellow: 2, green: 2.2, blue: 3, white: 3, infrared: 1.2 };
 
@@ -38,7 +59,7 @@ class Lamp {
     this.element = ctx.diode(anode, cathode, FORWARD_VOLTS[color] ?? 2, 8);
     this.high = 0;
     this.low = 0;
-    this.burned = false;
+    this.burned = null;
   }
 
   sample(phase) {
@@ -46,14 +67,18 @@ class Lamp {
   }
 
   level() {
-    if (this.burned) return 0;
+    // It stays broken, so the problem stays on show until the next run.
+    if (this.burned) {
+      this.ctx.problem('error', this.burned);
+      return 0;
+    }
     const current = blend(this.ctx, this.high, this.low, this.anode, this.cathode);
     if (current > LED_BURN_AMPS) {
-      this.burned = true;
+      this.burned = `${this.label} burned out at ${(current * 1000).toFixed(0)}mA. Add a series resistor.`;
       this.element.forwardVolts = 1000;
       this.element.on = false;
       this.ctx.circuit.markDirty(this.element);
-      this.ctx.problem('error', `${this.label} burned out at ${(current * 1000).toFixed(0)}mA. Add a series resistor.`);
+      this.ctx.problem('error', this.burned);
       return 0;
     }
     return brightness(current);
@@ -67,8 +92,16 @@ const lampModel = {
   sample(ctx, phase) {
     ctx.lamp.sample(phase);
   },
+  check(ctx) {
+    const reverse = ctx.difference('K', 'A');
+    if (reverse > LED_REVERSE_MAX_VOLTS) {
+      ctx.problem('error', `This LED has ${reverse.toFixed(1)}V across it backwards, above its ${LED_REVERSE_MAX_VOLTS}V limit.`);
+    } else if (reverse > LED_REVERSE_WARN_VOLTS) {
+      ctx.problem('warning', 'This LED is backwards, so it cannot light. Swap its legs.');
+    }
+  },
   view(ctx) {
-    return { brightness: ctx.lamp.level(), burned: ctx.lamp.burned };
+    return { brightness: ctx.lamp.level(), burned: !!ctx.lamp.burned };
   },
 };
 
@@ -147,15 +180,64 @@ class CharacterController {
 
 const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
 
+// What the meter's display shows, with the unit scaled to suit the value.
+function meterText(value, unit) {
+  const size = Math.abs(value);
+  if (unit === 'V') return { reading: value.toFixed(2), unit };
+  if (unit === 'A') return size < 1 ? { reading: (value * 1000).toFixed(1), unit: 'mA' } : { reading: value.toFixed(2), unit };
+  if (size < 1000) return { reading: value.toFixed(value < 10 ? 1 : 0), unit };
+  if (size < 1e6) return { reading: (value / 1000).toFixed(2), unit: `k${unit}` };
+  return { reading: (value / 1e6).toFixed(2), unit: `M${unit}` };
+}
+
+// A meter finds resistance by pushing a small test voltage through a known resistance. Anything
+// outside what that alone could produce means the circuit is powered.
+function meterOhms(ctx) {
+  const volts = ctx.difference('V', 'COM');
+  if (volts < -1e-6 || volts > METER_TEST_VOLTS) {
+    ctx.problem('warning', 'Ohms only works on an unpowered part. Disconnect it first.');
+    return { reading: 'LIVE', unit: '' };
+  }
+  const ohms = (METER_TEST_OHMS * volts) / (METER_TEST_VOLTS - volts);
+  return ohms > METER_MAX_OHMS ? { reading: 'OL', unit: 'Ω' } : meterText(Math.max(0, ohms), 'Ω');
+}
+
 export const MODELS = {
   resistor: {
     setup(ctx) {
-      ctx.resistor('1', '2', ctx.props.ohms ?? 220);
+      ctx.element = ctx.resistor('1', '2', ctx.props.ohms ?? 220);
+      ctx.high = 0;
+      ctx.low = 0;
+    },
+    sample(ctx, phase) {
+      ctx[phase] = amps(ctx.element) ** 2 * ctx.element.ohms;
+    },
+    check(ctx) {
+      const watts = blend(ctx, ctx.high, ctx.low, '1', '2');
+      if (watts > RESISTOR_WATTS) {
+        ctx.problem('error', `This resistor is burning ${watts.toFixed(2)}W, above its ${RESISTOR_WATTS}W rating. Use a larger value.`);
+      }
+    },
+  },
+  capacitor: {
+    check(ctx) {
+      if ((ctx.props.microfarads ?? 0) < POLARIZED_MICROFARADS) return;
+      const volts = ctx.difference('+', '-');
+      if (volts < -CAPACITOR_REVERSE_VOLTS) {
+        ctx.problem('error', 'This capacitor is wired backwards. Connect its + leg to the higher voltage.');
+      } else if (volts > CAPACITOR_MAX_VOLTS) {
+        ctx.problem('error', `This capacitor has ${volts.toFixed(1)}V across it, above its ${CAPACITOR_MAX_VOLTS}V rating.`);
+      }
     },
   },
   diode: {
     setup(ctx) {
-      ctx.diode('A', 'K', 0.7, 0.5);
+      ctx.element = ctx.diode('A', 'K', 0.7, 0.5);
+    },
+    check(ctx) {
+      if (ctx.element.amps > DIODE_MAX_AMPS) {
+        ctx.problem('error', `This diode is carrying ${ctx.element.amps.toFixed(1)}A, above its ${DIODE_MAX_AMPS}A limit. Add a resistor.`);
+      }
     },
   },
   led: lampModel,
@@ -174,7 +256,16 @@ export const MODELS = {
   },
   npn: {
     setup(ctx) {
-      ctx.npn('B', 'C', 'E');
+      ctx.element = ctx.npn('B', 'C', 'E');
+    },
+    check(ctx) {
+      const { baseAmps, collectorAmps } = ctx.element;
+      if (baseAmps > NPN_MAX_BASE_AMPS) {
+        ctx.problem('error', `The transistor's base is drawing ${(baseAmps * 1000).toFixed(0)}mA. Add a base resistor.`, 'B');
+      }
+      if (collectorAmps > NPN_MAX_COLLECTOR_AMPS) {
+        ctx.problem('error', `The transistor is switching ${(collectorAmps * 1000).toFixed(0)}mA, above its ${NPN_MAX_COLLECTOR_AMPS * 1000}mA limit.`, 'C');
+      }
     },
   },
   nmos: {
@@ -960,7 +1051,47 @@ export const MODELS = {
 
   battery: {
     setup(ctx) {
-      ctx.source('+', '-', ctx.props.volts ?? 9, 0.5);
+      ctx.element = ctx.source('+', '-', ctx.props.volts ?? 9, 0.5);
+    },
+    check(ctx) {
+      const current = Math.abs(amps(ctx.element));
+      if (current > BATTERY_MAX_AMPS) {
+        ctx.problem('error', `This battery is delivering ${current.toFixed(1)}A, above its ${BATTERY_MAX_AMPS}A limit. Look for a short circuit.`);
+      }
+    },
+  },
+
+  // Volts need no connection between the probes. Amps close them through a small resistance, and
+  // ohms drive a test voltage through them.
+  multimeter: {
+    setup(ctx) {
+      ctx.shunt = ctx.switch('V', 'COM', false, METER_SHUNT_OHMS);
+      ctx.test = ctx.output('V', { gnd: 'COM', ohms: METER_TEST_OHMS });
+      ctx.high = { volts: 0, amps: 0 };
+      ctx.low = { volts: 0, amps: 0 };
+    },
+    onControl(ctx, id, value) {
+      ctx.setSwitch(ctx.shunt, value === METER_AMPS && !ctx.blown);
+      ctx.test.set(value === METER_OHMS ? METER_TEST_VOLTS : null);
+    },
+    sample(ctx, phase) {
+      ctx[phase] = { volts: ctx.difference('V', 'COM'), amps: amps(ctx.shunt) };
+    },
+    check(ctx) {
+      if (!ctx.blown && Math.abs(amps(ctx.shunt)) > METER_FUSE_AMPS) {
+        ctx.blown = true;
+        ctx.setSwitch(ctx.shunt, false);
+      }
+      if (ctx.blown) ctx.problem('error', 'The meter blew its fuse. In Amps mode it must be in series, never across a supply.');
+    },
+    view(ctx) {
+      const { mode } = ctx.controls;
+      if (mode === METER_OHMS) return { mode, ...meterOhms(ctx) };
+      if (mode === METER_AMPS) {
+        if (ctx.blown) return { mode, reading: 'FUSE', unit: '' };
+        return { mode, ...meterText(blend(ctx, ctx.high.amps, ctx.low.amps, 'V', 'COM'), 'A') };
+      }
+      return { mode, ...meterText(blend(ctx, ctx.high.volts, ctx.low.volts, 'V', 'COM'), 'V') };
     },
   },
 };

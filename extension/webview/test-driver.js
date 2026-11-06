@@ -7,6 +7,7 @@ const pointer = (type, target, position, extra = {}) => {
 
 // setPointerCapture needs a live pointer, which synthetic events do not have.
 SVGElement.prototype.setPointerCapture = () => {};
+HTMLCanvasElement.prototype.setPointerCapture = () => {};
 
 const element = (id) => document.getElementById(id);
 const until = async (condition, timeoutMs = 5000) => {
@@ -25,16 +26,16 @@ export async function runTestStep(step, { state, toScreen, fit }) {
     const target = document.elementFromPoint(position.clientX, position.clientY) ?? canvas;
     return { target, position };
   };
-  const press = (point) => {
+  const press = (point, extra) => {
     const { target, position } = at(point);
-    pointer('pointerdown', target, position);
-    pointer('pointerup', target, position);
+    pointer('pointerdown', target, position, extra);
+    pointer('pointerup', target, position, extra);
   };
 
   switch (step.action) {
     case 'palette':
       document.querySelector(`[data-add="${step.type}"]`).click();
-      return { id: state.selection?.id };
+      return { id: state.selection[0]?.id };
     case 'move': {
       const part = state.doc.parts.find((p) => p.id === step.id);
       const from = { x: part.x + step.grab.x, y: part.y + step.grab.y };
@@ -46,7 +47,7 @@ export async function runTestStep(step, { state, toScreen, fit }) {
       return { x: part.x, y: part.y };
     }
     case 'clickPoint':
-      press(step.point);
+      press(step.point, step.shift ? { shiftKey: true } : {});
       return { wires: state.doc.wires.length, wiring: !!state.wiring };
     case 'key':
       canvas.focus();
@@ -68,6 +69,17 @@ export async function runTestStep(step, { state, toScreen, fit }) {
       const { target, position } = at(step.point);
       pointer('pointerdown', target, position);
       return { target: target.closest?.('[data-part]')?.dataset.part };
+    }
+    case 'press3d': {
+      const surface = document.querySelector('#stage3d canvas');
+      const box = surface.getBoundingClientRect();
+      const position = step.id ? state.scene3d.screenPoint(step.id) : { clientX: box.left + 2, clientY: box.top + 2 };
+      pointer('pointerdown', surface, position);
+      return { selection: state.selection, held: state.held.size };
+    }
+    case 'release3d': {
+      pointer('pointerup', document.querySelector('#stage3d canvas'), { clientX: 0, clientY: 0 });
+      return { held: state.held.size };
     }
     case 'release': {
       pointer('pointerup', canvas, { clientX: 0, clientY: 0 });
@@ -104,6 +116,9 @@ export async function runTestStep(step, { state, toScreen, fit }) {
         views: state.views,
         board: state.board,
         problems: state.problems,
+        selection: state.selection,
+        smoke: document.querySelectorAll('#layer-status .smoke').length,
+        idle: [...document.querySelectorAll('.part.idle')].map((element) => element.dataset.part),
         running: state.running,
         loadError: state.loadError,
         controlValues: state.controlValues,

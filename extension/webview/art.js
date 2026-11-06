@@ -1,10 +1,13 @@
 // SVG drawings for every part, in the part's own coordinates. Colors here are the physical
 // color of each object, so they deliberately stay the same in light and dark themes.
+import { noteLines, partBounds, partSize } from '../shared/catalog.js';
 
 export const LED_HEX = {
   red: '#ff3b30', green: '#34c759', blue: '#2f7bff', yellow: '#ffd60a', white: '#f5f5f5', orange: '#ff9f0a', infrared: '#7a4b8c',
 };
 export const BAND = ['#111', '#7a4a1e', '#d62828', '#f77f00', '#fcbf49', '#2a9d3f', '#1d6fd1', '#7b2cbf', '#888', '#eee'];
+
+export const escapeXml = (value) => String(value).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 const text = (x, y, value, size = 6, fill = '#fff', anchor = 'middle') => (
   `<text x="${x}" y="${y}" font-size="${size}" fill="${fill}" text-anchor="${anchor}" font-family="sans-serif">${value}</text>`);
@@ -204,6 +207,20 @@ const ART = {
   l293d: () => chip(70, 'L293D', ['VCC', 'IN4', 'OUT4', 'GND', 'GND', 'OUT3', 'IN3', 'EN2'], ['EN1', 'IN1', 'OUT1', 'GND', 'GND', 'OUT2', 'IN2', 'VS']),
 
   battery: (part) => lead(0, 40, 6, 32, '#d33', 2) + lead(30, 40, 24, 32, '#333', 2) + rect(0, -4, 30, 36, '#222', 2) + rect(0, -4, 30, 12, '#c9a94a', 2) + text(15, 20, `${part.props?.volts ?? 9}V`, 8),
+
+  multimeter(part, view) {
+    const mode = view?.mode ?? 0;
+    const dial = ['V', 'A', 'Ω'].map((label, i) => rect(4 + i * 18, 34, 16, 13, i === mode ? '#ffd60a' : '#3a3a3a', 2) + text(12 + i * 18, 44, label, 9, i === mode ? '#222' : '#ddd')).join('');
+    return rect(-6, -6, 72, 92, '#e0a526', 5) + rect(0, 0, 60, 28, '#b7c9a8', 2)
+      + text(56, 17, view?.reading ?? '---', 13, '#16230f', 'end') + text(56, 25, view?.unit ?? '', 6, '#16230f', 'end')
+      + dial + text(30, 60, 'Click to change', 4.4, '#3b2a00')
+      + circle(20, 80, 3.4, '#c8281e') + circle(40, 80, 3.4, '#1c1c1c') + text(20, 72, 'V', 5, '#3b2a00') + text(40, 72, 'COM', 5, '#3b2a00');
+  },
+  note(part) {
+    const lines = noteLines(part.props?.text);
+    return rect(0, 0, 130, partSize(part).h, '#fff3b0', 2, 'stroke="#c9b458"')
+      + lines.map((line, i) => text(5, 11 + i * 10, escapeXml(line), 7.5, '#3a3200', 'start')).join('');
+  },
 };
 
 function lcdBody(view, labels) {
@@ -224,9 +241,38 @@ function chip(w, name, top, bottom) {
     + pinLabels(top, 0, 10, 0, false) + pinLabels(bottom, 30);
 }
 
+// A flipped part mirrors its art, but its writing still has to read the right way round.
+function unmirrorText(svg) {
+  const swap = { start: 'end', end: 'start' };
+  return svg.replace(/<text x="(-?[\d.]+)" y="(-?[\d.]+)"([^>]*)>/g, (_, x, y, rest) => (
+    `<text x="${x}" y="${y}" transform="matrix(-1 0 0 1 ${2 * x} 0)"${rest.replace(/text-anchor="(start|end)"/, (m, anchor) => `text-anchor="${swap[anchor]}"`)}>`));
+}
+
 export function partArt(part, view) {
   const draw = ART[part.type];
-  return draw ? draw(part, view) : rect(0, 0, 20, 20, '#888');
+  const art = draw ? draw(part, view) : rect(0, 0, 20, 20, '#888');
+  return part.flip ? unmirrorText(art) : art;
+}
+
+export function partTransform(part) {
+  return `translate(${part.x} ${part.y}) rotate(${part.rotation ?? 0})${part.flip ? ' scale(-1 1)' : ''}`;
+}
+
+// A student's name for a part, drawn upright under it however the part is turned.
+export function partLabel(part) {
+  if (!part.label) return '';
+  const box = partBounds(part);
+  return `<text x="${box.x + box.w / 2}" y="${box.y + box.h + 3}" font-size="8" font-family="sans-serif" text-anchor="middle" fill="#fff" stroke="#0009" stroke-width="2" paint-order="stroke">${escapeXml(part.label)}</text>`;
+}
+
+// Rising puffs over a part being damaged. style.css animates them.
+export function smoke(x, y, size) {
+  const puff = (dx, dy, r, delay) => `<circle class="puff" style="animation-delay:${delay}s" cx="${dx}" cy="${dy}" r="${r}"/>`;
+  return `<g class="smoke" transform="translate(${x} ${y}) scale(${size})"><circle class="scorch" r="7"/>${puff(-3, -2, 4, 0)}${puff(3, -3, 5, 0.5)}${puff(0, -4, 4.5, 1)}</g>`;
+}
+
+export function warningMark(x, y) {
+  return `<g class="warning-mark" transform="translate(${x} ${y})"><path d="M0 -8L8 6H-8z"/><text y="4.5" text-anchor="middle">!</text></g>`;
 }
 
 export function holePattern() {

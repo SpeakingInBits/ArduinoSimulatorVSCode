@@ -14,11 +14,15 @@
   <button id="undo" title="Undo (Ctrl+Z)">Undo</button>
   <button id="redo" title="Redo (Ctrl+Y)">Redo</button>
   <button id="rotate" title="Rotate selection (R)">Rotate</button>
+  <button id="flip" title="Flip selection left to right (F)">Flip</button>
   <button id="delete" title="Delete selection (Del)">Delete</button>
   <span class="divider"></span>
   <button id="fit" title="Fit the circuit in view">Fit</button>
   <button id="view3d" title="Look at the circuit in 3D">3D view</button>
   <button id="diagram" title="Show the circuit as a schematic">Diagram</button>
+  <span class="divider"></span>
+  <button id="export" title="Save an image, a parts list or a project package">Export</button>
+  <button id="import" title="Open a project package">Import</button>
   <span id="status" class="status">Stopped</span>
 </header>
 <main class="layout">
@@ -33,10 +37,12 @@
         <g id="layer-background"></g>
         <g id="layer-parts"></g>
         <g id="layer-wires"></g>
+        <g id="layer-labels"></g>
+        <g id="layer-status"></g>
         <g id="layer-overlay"></g>
       </g>
     </svg>
-    <div id="stage3d" hidden><p class="hint">Drag to turn. Shift-drag to move. Scroll to zoom.</p></div>
+    <div id="stage3d" hidden><p class="hint">Drag to turn. Shift-drag to move. Scroll to zoom. While running, click a part to use it.</p></div>
     <div id="stage-diagram" hidden></div>
     <div id="tooltip" class="tooltip" hidden></div>
   </section>

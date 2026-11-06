@@ -101,7 +101,7 @@ export function wireRoute(doc, wire, index = 0, supports = surfaces(doc)) {
 
 // The area the circuit covers on the table.
 export function sceneBounds(doc) {
-  const boxes = doc.parts.map((part) => {
+  const boxes = doc.parts.filter((part) => !definition(part.type).annotation).map((part) => {
     const entry = definition(part.type);
     return outline(part, isBoard(entry) ? { x: 0, y: 0, w: entry.w, h: entry.h } : partBody(part));
   });
