@@ -30,7 +30,7 @@
   const sent = [];
   window.sentMessages = sent;
   window.acquireVsCodeApi = () => ({ postMessage: (message) => sent.push(message) });
-  await import('../webview/diagram.js');
+  await import('../webview/diagram-file.js');
 
   const { CATALOG, defaultProps, emptyCircuit } = await import('../shared/catalog.js');
   const params = new URLSearchParams(location.search);

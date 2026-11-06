@@ -108,6 +108,7 @@ export async function runTestStep(step, { state, toScreen, fit }) {
         loadError: state.loadError,
         controlValues: state.controlValues,
         view3d: state.scene3d?.info() ?? null,
+        diagram: state.diagram?.info() ?? null,
         sliders: Object.fromEntries([...document.querySelectorAll('[data-slider]')].map((input) => [input.dataset.slider, input.value])),
         crossOriginIsolated: self.crossOriginIsolated,
         sharedArrayBuffer: typeof SharedArrayBuffer,

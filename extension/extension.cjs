@@ -222,11 +222,14 @@ class Session {
     return true;
   }
 
+  async showDiagram(folder) {
+    if (await this.open(folder)) this.post({ type: 'showDiagram' });
+  }
+
   onMessage(message) {
     switch (message.type) {
       case 'ready': this.markReady(); break;
       case 'save': this.saveCircuit(message.circuit); break;
-      case 'diagram': showDiagram(this.folder); break;
       case 'run': this.run(); break;
       case 'stop': this.stop(); break;
       case 'input': this.board?.write(message.text); break;
@@ -342,20 +345,6 @@ class DiagramEditor {
     });
     webview.html = pageHtml(this.context, webview, 'diagram.html');
   }
-}
-
-async function showDiagram(folder) {
-  if (!folder) {
-    vscode.window.showWarningMessage('Open a project folder first, or create one with "New Project from Example".');
-    return;
-  }
-  session.flushSave();
-  const file = path.join(folder, CIRCUIT_FILE);
-  if (!fs.existsSync(file)) {
-    vscode.window.showInformationMessage('This project has no circuit yet. Add a part in the circuit builder first.');
-    return;
-  }
-  await vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(file), DIAGRAM_VIEW, vscode.ViewColumn.Beside);
 }
 
 function copyFolder(from, to) {
@@ -480,7 +469,7 @@ function activate(context) {
   session.noteEditor(vscode.window.activeTextEditor);
   const command = (id, handler) => context.subscriptions.push(vscode.commands.registerCommand(id, handler));
   command('metroSim.open', () => session.open(projectFolder()));
-  command('metroSim.diagram', () => showDiagram(projectFolder()));
+  command('metroSim.diagram', () => session.showDiagram(projectFolder()));
   command('metroSim.run', async () => {
     if (await session.open(projectFolder())) await session.run();
   });

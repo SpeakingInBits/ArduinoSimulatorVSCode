@@ -2,6 +2,7 @@
 import { BOARD_TYPE, CATALOG, CATEGORIES, defaultProps, definition, emptyCircuit, pinPosition } from '../shared/catalog.js';
 import { buildNets, pinKey } from '../shared/nets.js';
 import { holePattern, partArt } from './art.js';
+import { createDiagram } from './diagram.js';
 import { SerialFilter, typeInto } from './serial-text.js';
 
 const vscode = acquireVsCodeApi();
@@ -15,6 +16,7 @@ const GROUND_PIN = /^(GND\d?|VSS|-)$/;
 const $ = (id) => document.getElementById(id);
 const canvas = $('canvas');
 const world = $('world');
+const diagram = createDiagram($('stage-diagram'));
 
 const state = {
   doc: emptyCircuit(),
@@ -35,6 +37,7 @@ const state = {
   controlValues: {},
   loadError: undefined, // Why circuit.json could not be used. Nothing can be edited until it is fixed.
   scene3d: null, // The 3D view, while it is open.
+  diagram: null, // The circuit diagram, while it is open.
 };
 
 const partById = (id) => state.doc.parts.find((part) => part.id === id);
@@ -195,6 +198,7 @@ function render() {
   renderInspector();
   updateToolbar();
   state.scene3d?.sync(state.doc, viewOf);
+  state.diagram?.sync(state.doc, state.loadError);
 }
 
 function updatePart(id) {
@@ -219,7 +223,9 @@ async function toggle3d() {
     button.textContent = '3D view';
     return;
   }
+  closeDiagram();
   button.disabled = true;
+  $('diagram').disabled = true;
   stage.hidden = false;
   try {
     const { createScene3d } = await import('./scene3d.js');
@@ -234,6 +240,25 @@ async function toggle3d() {
     stage.hidden = true;
     button.title = '3D view is not available on this computer.';
   }
+  $('diagram').disabled = false;
+}
+
+// --- Circuit diagram ---
+
+function openDiagram() {
+  if ($('diagram').disabled) return; // The 3D view is still loading.
+  if (state.scene3d) toggle3d();
+  state.diagram = diagram;
+  $('stage-diagram').hidden = false;
+  $('diagram').textContent = '2D view';
+  diagram.sync(state.doc, state.loadError);
+  diagram.fit();
+}
+
+function closeDiagram() {
+  state.diagram = null;
+  $('stage-diagram').hidden = true;
+  $('diagram').textContent = 'Diagram';
 }
 
 function updateToolbar() {
@@ -842,7 +867,9 @@ const handlers = {
     render();
     fit();
     state.scene3d?.fit();
+    state.diagram?.fit();
   },
+  showDiagram: openDiagram,
   serial: (message) => appendSerial(message.text),
   clearConsole() {
     consoleElement.textContent = '';
@@ -881,9 +908,9 @@ $('undo').addEventListener('click', () => restore(state.undo, state.redo));
 $('redo').addEventListener('click', () => restore(state.redo, state.undo));
 $('rotate').addEventListener('click', rotateSelection);
 $('delete').addEventListener('click', deleteSelection);
-$('fit').addEventListener('click', () => (state.scene3d ? state.scene3d.fit() : fit()));
+$('fit').addEventListener('click', () => (state.scene3d ?? state.diagram ?? { fit }).fit());
 $('view3d').addEventListener('click', toggle3d);
-$('diagram').addEventListener('click', () => vscode.postMessage({ type: 'diagram' }));
+$('diagram').addEventListener('click', () => (state.diagram ? closeDiagram() : openDiagram()));
 $('search').addEventListener('input', (event) => renderPalette(event.target.value));
 $('parts').addEventListener('click', (event) => {
   const type = event.target.dataset?.add;

@@ -37,12 +37,22 @@ const pinOf = (doc, id, pin, catalog) => {
   return catalog.pinPosition(part, definition);
 };
 
-async function waitForDiagram(diagramEditor, ready) {
+async function waitForDiagram(step, ready) {
+  let shown;
+  for (let i = 0; i < 100; i++) {
+    ({ diagram: shown } = await step({ action: 'read' }));
+    if (shown && ready(shown)) return shown;
+    await sleep(100);
+  }
+  throw new Error(`The diagram never showed what was expected: ${JSON.stringify(shown)}`);
+}
+
+async function waitForFileDiagram(diagramEditor, ready) {
   for (let i = 0; i < 100; i++) {
     if (diagramEditor.shown && ready(diagramEditor.shown)) return diagramEditor.shown;
     await sleep(100);
   }
-  throw new Error(`The diagram never showed what was expected: ${JSON.stringify(diagramEditor.shown)}`);
+  throw new Error(`The file's diagram never showed what was expected: ${JSON.stringify(diagramEditor.shown)}`);
 }
 
 // The open circuit diagram, which fails the test if circuit.json opened some other way.
@@ -124,26 +134,30 @@ async function run() {
     report.steps.savedWires = saved.wires.length;
     if (saved.wires.length !== 8) throw new Error('circuit.json was not saved');
 
-    // Opening circuit.json shows the diagram, inside the webview's security policy, and it
-    // follows what the builder saves.
+    // The builder shows the diagram without circuit.json being opened, inside the webview's
+    // security policy, and it follows the circuit as it changes.
+    await step({ action: 'click', selector: '#diagram' });
+    report.steps.diagram = await waitForDiagram(step, (shown) => shown.parts === 4);
+    if (report.steps.diagram.wires < 3 || report.steps.diagram.flags < 4) throw new Error(`The diagram is wrong: ${JSON.stringify(report.steps.diagram)}`);
+    await step({ action: 'palette', type: 'resistor' });
+    await waitForDiagram(step, (shown) => shown.parts === 5);
+    await step({ action: 'key', key: 'z', ctrl: true });
+    await waitForDiagram(step, (shown) => shown.parts === 4);
+    await step({ action: 'click', selector: '#diagram' });
+    if ((await step({ action: 'read' })).diagram !== null) throw new Error('The diagram did not close');
+
+    // Opening circuit.json shows the diagram too, and it follows what the builder saves.
     const { diagramEditor } = extension.exports;
     // Not a preview, which would replace code.py and leave the group empty once it closes.
     await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(path.join(folder, 'circuit.json')), { viewColumn: vscode.ViewColumn.One, preview: false });
     const opened = await diagramTab();
-    report.steps.diagram = await waitForDiagram(diagramEditor, (shown) => shown.parts === 4);
-    if (report.steps.diagram.wires < 3 || report.steps.diagram.flags < 4) throw new Error(`The diagram is wrong: ${JSON.stringify(report.steps.diagram)}`);
+    report.steps.fileDiagram = await waitForFileDiagram(diagramEditor, (shown) => shown.parts === 4);
+    if (report.steps.fileDiagram.wires !== report.steps.diagram.wires) throw new Error(`The two diagrams differ: ${JSON.stringify(report.steps.fileDiagram)}`);
     await step({ action: 'palette', type: 'resistor' });
-    await waitForDiagram(diagramEditor, (shown) => shown.parts === 5);
+    await waitForFileDiagram(diagramEditor, (shown) => shown.parts === 5);
     await step({ action: 'key', key: 'z', ctrl: true });
-    await waitForDiagram(diagramEditor, (shown) => shown.parts === 4);
+    await waitForFileDiagram(diagramEditor, (shown) => shown.parts === 4);
     await vscode.window.tabGroups.close(opened);
-
-    // The builder's button opens it too.
-    diagramEditor.shown = undefined;
-    await step({ action: 'click', selector: '#diagram' });
-    const fromButton = await diagramTab();
-    await waitForDiagram(diagramEditor, (shown) => shown.parts === 4);
-    await vscode.window.tabGroups.close(fromButton);
 
     // Run it, then use the part on the canvas and the slider.
     await step({ action: 'click', selector: '#run' });
@@ -170,6 +184,16 @@ async function run() {
     report.steps.view3dFollowsRun = (await waitFor3d(step, (now) => now.artDrawn > view3d.artDrawn)).artDrawn;
     await step({ action: 'click', selector: '#view3d' });
     if ((await step({ action: 'read' })).view3d !== null) throw new Error('3D view did not close');
+
+    // Only one of the 3D view and the diagram is open at a time.
+    await step({ action: 'click', selector: '#diagram' });
+    await step({ action: 'click', selector: '#view3d' });
+    await waitFor3d(step, () => true);
+    if ((await step({ action: 'read' })).diagram !== null) throw new Error('The 3D view did not replace the diagram');
+    await step({ action: 'click', selector: '#diagram' });
+    const swapped = await step({ action: 'read' });
+    if (swapped.view3d !== null || !swapped.diagram) throw new Error('The diagram did not replace the 3D view');
+    await step({ action: 'click', selector: '#diagram' });
 
     // Stop, and the page returns to editing.
     await step({ action: 'click', selector: '#stop' });
@@ -287,9 +311,12 @@ async function run() {
     report.steps.brokenCircuitError = broken.loadError;
     if (!broken.loadError) throw new Error('A broken circuit.json was not reported');
     await vscode.commands.executeCommand('metroSim.diagram');
-    const brokenDiagram = await diagramTab();
-    report.steps.brokenDiagram = (await waitForDiagram(diagramEditor, (shown) => shown.problem)).problem;
-    await vscode.window.tabGroups.close(brokenDiagram);
+    report.steps.brokenDiagram = (await waitForDiagram(step, (shown) => shown.problem)).problem;
+    await step({ action: 'click', selector: '#diagram' });
+    await vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(circuitFile), 'metroSim.diagram', vscode.ViewColumn.Beside);
+    const brokenFile = await diagramTab();
+    report.steps.brokenFileDiagram = (await waitForFileDiagram(diagramEditor, (shown) => shown.problem)).problem;
+    await vscode.window.tabGroups.close(brokenFile);
     await step({ action: 'palette', type: 'resistor' });
     await sleep(600);
     if (!fs.readFileSync(circuitFile, 'utf8').startsWith('not json ')) throw new Error('A broken circuit.json was overwritten');

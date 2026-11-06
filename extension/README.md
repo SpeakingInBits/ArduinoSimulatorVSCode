@@ -56,13 +56,15 @@ L293D, and batteries.
 
 ## Circuit diagram
 
-Open `circuit.json`, or press **Diagram** in the builder, to see the circuit as a schematic. It shows
-how parts are joined rather than where they sit, so breadboards disappear and only the board pins in
-use are drawn. Power and ground are marked at each pin instead of being wired across the page.
+Press **Diagram** in the builder, run **Metro Simulator: Show Circuit Diagram**, or open
+`circuit.json` to see the circuit as a schematic. It shows how parts are joined rather than where
+they sit, so breadboards disappear and only the board pins in use are drawn. Power and ground are
+marked at each pin instead of being wired across the page.
 
-The diagram is drawn from the file and only shows it, so it updates as you build. Press **Edit
-circuit** to open the builder, or **Show JSON** to see the file as text. Hover over a wire to light
-up everything joined to it. Wires that cross without a dot are not connected.
+The diagram only shows the circuit, and it updates as you build. In the builder, press **2D view** to
+go back to building. In the `circuit.json` tab, press **Edit circuit** to open the builder, or **Show
+JSON** to see the file as text. Hover over a wire to light up everything joined to it. Wires that
+cross without a dot are not connected.
 
 Parts need no diagram symbol: each one is drawn as a labelled block. To draw a part with its own
 symbol, add it to `SYMBOLS` in `webview/diagram-art.js`.

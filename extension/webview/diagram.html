@@ -12,12 +12,10 @@
   <button id="text" title="Open circuit.json as text">Show JSON</button>
   <span class="divider"></span>
   <button id="fit" title="Fit the diagram in view">Fit</button>
-  <span id="summary" class="status"></span>
 </header>
 <main class="diagram-stage">
-  <svg id="diagram" tabindex="0" role="img" aria-label="Circuit diagram"><g id="sheet"></g></svg>
-  <div id="message" class="diagram-message" hidden></div>
+  <div id="stage-diagram"></div>
 </main>
-<script type="module" nonce="{{nonce}}" src="{{webviewRoot}}/diagram.js"></script>
+<script type="module" nonce="{{nonce}}" src="{{webviewRoot}}/diagram-file.js"></script>
 </body>
 </html>
