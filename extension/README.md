@@ -128,3 +128,7 @@ The 3D view button shows the circuit in 3D. Students still build in the 2D canva
 Parts need no 3D model: each one gets a body from the largest shape in its 2D art, with that art on top. To model a part by hand, add it to `BUILDERS` in `webview/scene3d.js`.
 
 three.js 0.186.1 is kept in `webview/vendor/three`, copied from the npm package's `build` folder with its licence. It loads the first time the view opens.
+
+## Licence
+
+MIT. The extension includes third-party software, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

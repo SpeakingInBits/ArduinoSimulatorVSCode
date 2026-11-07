@@ -6,7 +6,7 @@
   "publisher": "speakinginbits",
   "type": "module",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/SpeakingInBits/ArduinoSimulatorVSCode" },
   "engines": { "vscode": "^1.100.0" },
   "categories": ["Education", "Other"],
