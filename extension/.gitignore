@@ -3,3 +3,4 @@ libs/
 stubs/
 node_modules/
 *.vsix
+/LICENSE

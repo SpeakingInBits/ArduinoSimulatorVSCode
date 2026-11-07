@@ -52,3 +52,8 @@ The Release workflow builds the firmware, runs the tests and publishes a GitHub 
 `.vsix`. Run it from the Actions tab on `main`, and choose what kind of change the release holds.
 Pull requests that change the packaging build the `.vsix` without releasing it, and the file is
 attached to the workflow run.
+
+## Licence
+
+MIT, as [LICENSE](LICENSE) says. The extension also includes third-party software, listed in
+[THIRD_PARTY_NOTICES.md](extension/THIRD_PARTY_NOTICES.md).
